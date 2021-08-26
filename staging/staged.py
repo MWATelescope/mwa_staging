@@ -13,8 +13,8 @@ import psycopg2
 from pydantic import BaseModel
 
 
-CPPATH = ['/usr/local/etc/pasd.conf', '/usr/local/etc/pasd-local.conf',
-          './pasd.conf', './pasd-local.conf']
+CPPATH = ['/usr/local/etc/staging.conf', '/usr/local/etc/staging-local.conf',
+          './staging.conf', './staging-local.conf']
 CP = conparser(defaults={})
 CPfile = CP.read(CPPATH)
 if not CPfile:
