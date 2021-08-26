@@ -4,6 +4,7 @@ CREATE TABLE staging_jobs (
     job_id integer,
     created timestamp with time zone,
     completed boolean,
+    total_files integer,
 
     PRIMARY KEY (job_id)
 );
