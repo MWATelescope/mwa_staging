@@ -10,6 +10,7 @@ import datetime
 from datetime import timezone
 from typing import Optional, List, Dict, Tuple
 
+import traceback
 from fastapi import FastAPI, Response, status
 import psycopg2
 from psycopg2 import extras
@@ -20,7 +21,7 @@ import requests
 # SCOUT_URL = 'http://192.168.0.40:8081/v1/request/batchstage'
 
 # Dummy SCOUT URL - for testing:
-SCOUT_URL = 'http://localhost'
+SCOUT_URL = 'http://localhost:8000/v1/request/batchstage'
 
 CPPATH = ['/usr/local/etc/staging.conf', '/usr/local/etc/staging-local.conf',
           './staging.conf', './staging-local.conf']
@@ -45,7 +46,7 @@ WHERE job_id = %s
 """
 
 WRITE_FILES = """
-INSERT INTO files (job_id, filename, ready, readytime)
+INSERT INTO files (job_id, filename)
 VALUES %s
 """
 
@@ -67,6 +68,13 @@ WHERE job_id = %s
 """
 
 
+class ScoutList(BaseModel):
+    """
+    List of files to stage, used to emulate Scout's staging server
+    """
+    path: List[str]
+
+
 class Job(BaseModel):
     job_id: int       # Integer ASVO job ID
     files: List[str]  # A list of filenames, including full paths
@@ -74,12 +82,12 @@ class Job(BaseModel):
 
 class JobStatus(BaseModel):
     job_id: int       # Integer ASVO job ID
-    created: int      # Integer unix timestamp when the job was created
-    completed: bool   # True if all files have been staged
-    total_files: int  # Total number of files in this job
+    created: Optional[int] = None      # Integer unix timestamp when the job was created
+    completed: Optional[bool] = None   # True if all files have been staged
+    total_files: Optional[int] = None  # Total number of files in this job
     # The files attribute is a list of (ready:bool, readytime:int) tuples where ready_time
     # is the time when that file was staged (or None)
-    files: Dict[str, Tuple[bool, int]]
+    files: Dict[str, Tuple[Optional[bool], Optional[int]]] = {}
 
 
 def stage_files(job: Job):
@@ -110,7 +118,7 @@ def new_job(job: Job, response:Response):
         with DB:
             with DB.cursor() as curs:
                 curs.execute('SELECT count(*) FROM staging_jobs WHERE job_id = %s' % (job.job_id,))
-                if curs.fetchone[0] > 0:
+                if curs.fetchone()[0] > 0:
                     response.status_code = status.HTTP_403_FORBIDDEN
                     return
                 curs.execute(CREATE_JOB, (job.job_id,
@@ -123,13 +131,15 @@ def new_job(job: Job, response:Response):
                     stage_files(job)   # Actually stage these files
                 except Exception:  # Couldn't stage the files
                     DB.rollback()    # Reverse the job and file creation in the database
+                    print(traceback.format_exc())
                     response.status_code = status.HTTP_502_BAD_GATEWAY
         return
     except Exception:  # Any other errors
+        print(traceback.format_exc())
         response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
 
 
-@app.get("/staging/{job_id}", response_model=Optional[JobStatus], status_code=status.HTTP_200_OK)
+@app.get("/staging/", status_code=status.HTTP_200_OK)  # , response_model=JobStatus)
 def read_status(job_id: int, response:Response):
     """
     GET API to read status details about an existing staging job. Accepts a single parameter in the
@@ -151,25 +161,28 @@ def read_status(job_id: int, response:Response):
                 if len(rows) > 1:   # Multiple rows for the same Job ID
                     response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
                     return
-                created_datetime, completed, total_files = rows[0]
-                created = int(created_datetime.timestamp())
+                created, completed, total_files = rows[0]
 
                 files = {}
                 curs.execute(QUERY_FILES, (job_id,))
                 for row in curs:
-                    filename, ready, readytime_datetime = row
-                    files[filename] = (ready, int(readytime_datetime.timestamp()))
+                    filename, ready, readytime = row
+                    if readytime is not None:
+                        readytime = int(readytime)
+                    files[filename] = (ready, readytime)
                 result = JobStatus(job_id=job_id,
-                                   created=created,
+                                   created=int(created),
                                    completed=completed,
                                    total_files=len(files),
                                    files=files)
                 return result
     except Exception:
         response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+        print(traceback.format_exc())
+        return
 
 
-@app.delete("/staging/{job_id}", status_code=status.HTTP_200_OK)
+@app.delete("/staging/", status_code=status.HTTP_200_OK)
 def delete_job(job_id: int, response:Response):
     """
     POST API to create a new staging job. Accepts a JSON dictionary defined above by the Job() class,
@@ -190,3 +203,14 @@ def delete_job(job_id: int, response:Response):
         return
     except Exception:  # Any other errors
         response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+
+
+@app.post("/v1/request/batchstage", status_code=status.HTTP_200_OK)
+def dummy_scout(files: ScoutList):
+    """
+    Emulate Scout's staging server for development. Always returns 200/OK and ignores the file list.
+
+    :param files: An instance of ScoutList
+    :return: None
+    """
+    pass
