@@ -103,7 +103,7 @@ def HandleMessages(consumer):
             print(traceback.format_exc())
             return
         finally:
-            consumer.commit()
+            consumer.commit()   # Tell the Kafka server we've processed that message, so we don't see it again.
 
 
 def MonitorJobs():
