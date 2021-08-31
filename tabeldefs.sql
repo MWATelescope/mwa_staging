@@ -5,6 +5,7 @@ CREATE TABLE staging_jobs (
     created timestamp with time zone,
     completed boolean,
     total_files integer,
+    notified boolean,
 
     PRIMARY KEY (job_id)
 );
@@ -16,7 +17,7 @@ CREATE TABLE files (
     ready boolean,
     readytime timestamp with time zone,
 
-    PRIMARY KEY (filename)
+    PRIMARY KEY (job_id, filename)
 );
 
-CREATE INDEX files_job_id ON files (job_id);
+CREATE INDEX files_filename ON files (filename);

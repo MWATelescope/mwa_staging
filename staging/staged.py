@@ -36,8 +36,8 @@ DB = psycopg2.connect(user=CP['default']['dbuser'],
                       database=CP['default']['dbname'])
 
 CREATE_JOB = """
-INSERT INTO staging_jobs (job_id, created, completed, total_files)
-VALUES (%s, %s, %s, %s)
+INSERT INTO staging_jobs (job_id, created, completed, total_files, notified)
+VALUES (%s, %s, false, %s, false)
 """
 
 DELETE_JOB = """
@@ -46,7 +46,7 @@ WHERE job_id = %s
 """
 
 WRITE_FILES = """
-INSERT INTO files (job_id, filename)
+INSERT INTO files (job_id, filename, ready)
 VALUES %s
 """
 
@@ -75,6 +75,14 @@ class ScoutList(BaseModel):
     path: List[str]
 
 
+class JobResult(BaseModel):
+    """
+    Used to emulate the actual ASVO server during development.
+    """
+    job_id: int   # Integer ASVO job ID
+    ok: bool      # True if the job succeeded, False if it failed.
+
+
 class Job(BaseModel):
     job_id: int       # Integer ASVO job ID
     files: List[str]  # A list of filenames, including full paths
@@ -98,7 +106,8 @@ def stage_files(job: Job):
     :return: None
     """
     post_data = {'path':job.files}
-    requests.post(SCOUT_URL, data=post_data)
+    result = requests.post(SCOUT_URL, data=post_data)
+    return result.status_code == 200
 
 
 app = FastAPI()
@@ -121,17 +130,19 @@ def new_job(job: Job, response:Response):
                 if curs.fetchone()[0] > 0:
                     response.status_code = status.HTTP_403_FORBIDDEN
                     return
-                curs.execute(CREATE_JOB, (job.job_id,
-                                          datetime.datetime.now(timezone.utc),
-                                          False,
-                                          len(job.files)))
-                psycopg2.extras.execute_values(curs, WRITE_FILES, [(job.job_id, f) for f in job.files])
+                curs.execute(CREATE_JOB, (job.job_id,                           # job_id
+                                          datetime.datetime.now(timezone.utc),  # created
+                                          len(job.files)))                      # total_files
+                psycopg2.extras.execute_values(curs, WRITE_FILES, [(job.job_id, f, False) for f in job.files])
 
+                ok = False
                 try:
-                    stage_files(job)   # Actually stage these files
+                    ok = stage_files(job)   # Actually stage these files
                 except Exception:  # Couldn't stage the files
-                    DB.rollback()    # Reverse the job and file creation in the database
                     print(traceback.format_exc())
+
+                if not ok:
+                    DB.rollback()    # Reverse the job and file creation in the database
                     response.status_code = status.HTTP_502_BAD_GATEWAY
         return
     except Exception:  # Any other errors
@@ -211,6 +222,17 @@ def dummy_scout(files: ScoutList):
     Emulate Scout's staging server for development. Always returns 200/OK and ignores the file list.
 
     :param files: An instance of ScoutList
+    :return: None
+    """
+    pass
+
+
+@app.post("/jobresult", status_code=status.HTTP_200_OK)
+def dummy_asvo(result: JobResult):
+    """
+    Emulate ASVO server for development. Always returns 200/OK.
+
+    :param result: An instance of JobResult
     :return: None
     """
     pass
