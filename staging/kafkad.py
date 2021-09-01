@@ -3,6 +3,14 @@ Daemon to run continuously, receiving Kafka messages about files that have been 
 
 Updates the 'staging_jobs' and 'files' tables in the database, and pushes a notification to ASVO
 when all files in a job have been staged.
+
+To test with manually generated Kafka messages, eg:
+
+>>> from kafka import KafkaProducer
+>>> import json
+>>> p = KafkaProducer(bootstrap_servers=['localhost:9092'], value_serializer=lambda v: json.dumps(v).encode('utf-8'))
+>>> p.send('mwa', {'filename':'gibber'})
+>>> p.send('mwa', {'filename':'foo'})
 """
 
 from configparser import ConfigParser as conparser
