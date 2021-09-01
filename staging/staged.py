@@ -129,6 +129,7 @@ def new_job(job: Job, response:Response):
                 curs.execute('SELECT count(*) FROM staging_jobs WHERE job_id = %s' % (job.job_id,))
                 if curs.fetchone()[0] > 0:
                     response.status_code = status.HTTP_403_FORBIDDEN
+                    print("Can't create job %d, because it already exists." % job.job_id)
                     return
                 curs.execute(CREATE_JOB, (job.job_id,                           # job_id
                                           datetime.datetime.now(timezone.utc),  # created
@@ -142,8 +143,11 @@ def new_job(job: Job, response:Response):
                     print(traceback.format_exc())
 
                 if not ok:
+                    print('Error contacting Scout to stage files for job %d, job not created.' % job.job_id)
                     DB.rollback()    # Reverse the job and file creation in the database
                     response.status_code = status.HTTP_502_BAD_GATEWAY
+                else:
+                    print('New job %d created with these files: %s' % (job.job_id, job.files))
         return
     except Exception:  # Any other errors
         print(traceback.format_exc())
@@ -186,6 +190,7 @@ def read_status(job_id: int, response:Response):
                                    completed=completed,
                                    total_files=len(files),
                                    files=files)
+                print("Job %d STATUS: %s" % (job_id, result))
                 return result
     except Exception:
         response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -196,8 +201,7 @@ def read_status(job_id: int, response:Response):
 @app.delete("/staging/", status_code=status.HTTP_200_OK)
 def delete_job(job_id: int, response:Response):
     """
-    POST API to create a new staging job. Accepts a JSON dictionary defined above by the Job() class,
-    which is processed by FastAPI and passed to this function as an actual instance of the Job() class.
+    POST API to delete a staging job. Accepts an integer job_id value, to be deleted.
 
     :param job_id:    # Integer ASVO job ID
     :param response:  # An instance of fastapi.Response(), used to set the status code returned
@@ -211,6 +215,7 @@ def delete_job(job_id: int, response:Response):
                     response.status_code = status.HTTP_404_NOT_FOUND
                     return
                 curs.execute(DELETE_FILES, (job_id,))
+                print('Job %d DELETED.' % job_id)
         return
     except Exception:  # Any other errors
         response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -224,7 +229,7 @@ def dummy_scout(files: ScoutList):
     :param files: An instance of ScoutList
     :return: None
     """
-    pass
+    print("Pretending be Scout: Staging: %s" % (files,))
 
 
 @app.post("/jobresult", status_code=status.HTTP_200_OK)
@@ -235,4 +240,4 @@ def dummy_asvo(result: JobResult):
     :param result: An instance of JobResult
     :return: None
     """
-    pass
+    print("Pretending to be ASVO: Job result received: %s" % (result,))
