@@ -12,7 +12,7 @@ import json
 from typing import Optional, List, Dict, Tuple
 
 import traceback
-from fastapi import FastAPI, Response, status
+from fastapi import FastAPI, Query, Response, status
 import psycopg2
 from psycopg2 import extras
 from pydantic import BaseModel
@@ -216,26 +216,26 @@ def delete_job(job_id: int, response:Response):
         response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
 
 
-@app.post("/v1/request/batchstage{path}", status_code=status.HTTP_200_OK)
-def dummy_scout_stage(path: str):  # TODO - find out how to handle multiple values
+@app.post("/v1/request/batchstage", status_code=status.HTTP_200_OK)
+def dummy_scout_stage(path: Optional[List[str]] = Query(...)):  # TODO - find out how to handle multiple values
     """
     Emulate Scout's staging server for development. Always returns 200/OK and ignores the file list.
 
-    :param path: One or more filenames to stage
+    :param path: A list of one or more filenames to stage
     :return: None
     """
     print("Pretending be Scout: Staging: %s" % (path,))
 
 
-@app.post("/v1/file{path}", status_code=status.HTTP_200_OK)
-def dummy_scout_status(path: str):
+@app.get("/v1/file", status_code=status.HTTP_200_OK)
+def dummy_scout_status(pathname: str = Query(...)):
     """
     Emulate Scout's staging server for development. Returns a dummy status for the file specified.
 
-    :param path: Filename to check the status for.
+    :param pathname: Filename to check the status for.
     :return: None
     """
-    print("Pretending be Scout: Returnin status for %s" % (path,))
+    print("Pretending be Scout: Returnin status for %s" % (pathname,))
 
 
 @app.post("/jobresult", status_code=status.HTTP_200_OK)
