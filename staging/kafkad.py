@@ -30,6 +30,7 @@ import requests
 MWA_TOPIC = "mwa"    # Kafka topic to listen on
 KAFKA_SERVERS = ['localhost:9092']
 ASVO_URL = 'http://localhost:8000/jobresult'
+SCOUTURL = 'http://localhost:8000/v1/file'
 
 CHECK_INTERVAL = 60    # Check all job status details once every minute.
 RETRY_INTERVAL = 600   # Re-try notifying ASVO about completed jobs every 10 minutes until we succeed

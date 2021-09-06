@@ -68,13 +68,6 @@ WHERE job_id = %s
 """
 
 
-class ScoutList(BaseModel):
-    """
-    List of files to stage, used to emulate Scout's staging server
-    """
-    path: List[str]
-
-
 class JobResult(BaseModel):
     """
     Used to emulate the actual ASVO server during development.
@@ -105,6 +98,7 @@ def stage_files(job: Job):
     :param job: An instance of the Job() class
     :return: None
     """
+    # TODO - split into lots of individual requests to limit the number of filenames in the URL for each request
     post_data = {'path':job.files}
     result = requests.post(SCOUT_URL, data=post_data)
     return result.status_code == 200
@@ -221,15 +215,26 @@ def delete_job(job_id: int, response:Response):
         response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
 
 
-@app.post("/v1/request/batchstage", status_code=status.HTTP_200_OK)
-def dummy_scout(files: ScoutList):
+@app.post("/v1/request/batchstage{path}", status_code=status.HTTP_200_OK)
+def dummy_scout_stage(path: str):  # TODO - find out how to handle multiple values
     """
     Emulate Scout's staging server for development. Always returns 200/OK and ignores the file list.
 
-    :param files: An instance of ScoutList
+    :param path: One or more filenames to stage
     :return: None
     """
-    print("Pretending be Scout: Staging: %s" % (files,))
+    print("Pretending be Scout: Staging: %s" % (path,))
+
+
+@app.post("/v1/file{path}", status_code=status.HTTP_200_OK)
+def dummy_scout_status(path: str):
+    """
+    Emulate Scout's staging server for development. Returns a dummy status for the file specified.
+
+    :param path: Filename to check the status for.
+    :return: None
+    """
+    print("Pretending be Scout: Returnin status for %s" % (path,))
 
 
 @app.post("/jobresult", status_code=status.HTTP_200_OK)
