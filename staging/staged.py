@@ -92,6 +92,34 @@ class JobStatus(BaseModel):
     files: Dict[str, Tuple[Optional[bool], Optional[int]]] = {}
 
 
+class ScoutFileStatus(BaseModel):
+    """
+    Used by the Scout API dummy status service, to send the status of a single file.
+    """
+    pathname: str             # eg "/object.dat.0",
+    size: int = 0             # eg "10485760",
+    inode: int = 0            # eg "2",
+    uid: int = 0              # eg "0",
+    username: str = ""        # eg "root",
+    gid: int = 0              # eg "0",
+    groupname: str = ""       # eg "root",
+    mode: int = 0             # eg 33188,
+    modestring: str = ""      # eg "-rw-r--r--",
+    nlink: int = 0            # eg 1,
+    atime: int = 0            # eg "1618411999",
+    mtime: int = 0            # eg "1618411968",
+    ctime: int = 0            # eg "1618415117",
+    rtime: int = 0            # eg "1618415102",
+    version: str = ""         # eg "2560",
+    onlineblocks: int = 0     # eg "2560",
+    offlineblocks: int = 0    # eg "0",
+    flags: int = 0            # eg "0",
+    flagsstring: str = ""     # eg "",
+    archdone: bool = True     # eg true,
+    uuid: str = ""            # eg "8e9825f9-291d-415e-bb1f-38d8f865dcac",
+    copies: List = []         # Complex sub-structure that we'll ignore for this dummy service
+
+
 def stage_files(job: Job):
     """
     Issues a POST request to the SCOUT API to stage the files given in 'job'
@@ -227,7 +255,7 @@ def dummy_scout_stage(path: Optional[List[str]] = Query(...)):  # TODO - find ou
     print("Pretending be Scout: Staging: %s" % (path,))
 
 
-@app.get("/v1/file", status_code=status.HTTP_200_OK)
+@app.get("/v1/file", status_code=status.HTTP_200_OK, response_model=ScoutFileStatus)
 def dummy_scout_status(pathname: str = Query(...)):
     """
     Emulate Scout's staging server for development. Returns a dummy status for the file specified.
@@ -235,7 +263,11 @@ def dummy_scout_status(pathname: str = Query(...)):
     :param pathname: Filename to check the status for.
     :return: None
     """
-    print("Pretending be Scout: Returnin status for %s" % (pathname,))
+    resp = ScoutFileStatus(pathname=pathname)
+    resp.onlineblocks = 22
+    resp.offlineblocks = 1
+    print("Pretending be Scout: Returning status for %s" % (pathname,))
+    return resp
 
 
 @app.post("/jobresult", status_code=status.HTTP_200_OK)
