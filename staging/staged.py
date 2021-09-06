@@ -8,6 +8,7 @@ This file implements the REST API for accepting requests from ASVO, and another 
 from configparser import ConfigParser as conparser
 import datetime
 from datetime import timezone
+import json
 from typing import Optional, List, Dict, Tuple
 
 import traceback
@@ -100,7 +101,7 @@ def stage_files(job: Job):
     """
     # TODO - split into lots of individual requests to limit the number of filenames in the URL for each request
     post_data = {'path':job.files}
-    result = requests.post(SCOUT_URL, data=post_data)
+    result = requests.post(SCOUT_URL, data=json.dumps(post_data))
     return result.status_code == 200
 
 
