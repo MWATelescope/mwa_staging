@@ -89,7 +89,7 @@ class JobStatus(BaseModel):
     total_files: Optional[int] = None  # Total number of files in this job
     # The files attribute is a list of (ready:bool, readytime:int) tuples where ready_time
     # is the time when that file was staged (or None)
-    files: Dict[str, Tuple[Optional[bool], Optional[int]]] = {}
+    files: Optional[Dict[str, Tuple[bool, int]]] = {"":(False, 0)}
 
 
 class ScoutFileStatus(BaseModel):
@@ -128,8 +128,8 @@ def stage_files(job: Job):
     :return: None
     """
     # TODO - split into lots of individual requests to limit the number of filenames in the URL for each request
-    post_data = {'path':job.files}
-    result = requests.post(SCOUT_URL, data=json.dumps(post_data))
+    params = {'path':job.files}
+    result = requests.post(SCOUT_URL, params=params)
     return result.status_code == 200
 
 
@@ -177,7 +177,8 @@ def new_job(job: Job, response:Response):
         response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
 
 
-@app.get("/staging/", status_code=status.HTTP_200_OK)  # , response_model=JobStatus)
+# TODO - find out why specifing the response model here throws an exception in the server when you load the /docs URL
+@app.get("/staging/", status_code=status.HTTP_200_OK)   # , response_model=Optional[JobStatus])
 def read_status(job_id: int, response:Response):
     """
     GET API to read status details about an existing staging job. Accepts a single parameter in the

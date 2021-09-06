@@ -92,6 +92,18 @@ def send_notification(job_id, timeout=False):
     return result.status_code == 200
 
 
+def is_file_staged(filename):
+    """
+    Ask the Scout API for the status of this file, and return True if 'offlineblocks' is not equal to 0.
+    :param filename: File name to query
+    :return bool: True if the file is staged and ready.
+    """
+    result = requests.get(SCOUTURL, params={'pathname':filename})
+    resdict = result.json()
+    print('Got status for file %s: %s' % (filename, resdict))
+    return resdict['offlineblocks'] == 0
+
+
 def HandleMessages(consumer):
     """
     Runs forever, processing Kafka messages one by one. Exits if there's an exception
