@@ -30,17 +30,25 @@ import requests
 MWA_TOPIC = "mwa"    # Kafka topic to listen on
 KAFKA_SERVERS = ['localhost:9092']
 ASVO_URL = 'http://localhost:8000/jobresult'
-SCOUTURL = 'http://localhost:8000/v1/file'
+SCOUT_QUERY_URL = 'http://localhost:8000/v1/file'
 
 CHECK_INTERVAL = 60    # Check all job status details once every minute.
 RETRY_INTERVAL = 600   # Re-try notifying ASVO about completed jobs every 10 minutes until we succeed
 EXPIRY_TIME = 86400    # Return an error if it's been more than a day since a job was staged, and it's still not finished.
 
 COMPLETION_QUERY = """
-SELECT files.job_id, count(*), staging_jobs.total_files, staging_jobs.completed
+SELECT files.job_id, count(*), staging_jobs.total_files, staging_jobs.completed, staging_jobs.checked
 FROM files JOIN staging_jobs USING(job_id)
 WHERE ready AND (not staging_jobs.notified) 
-GROUP BY (files.job_id, staging_jobs.total_files, staging_jobs.completed)
+GROUP BY (files.job_id, staging_jobs.total_files, staging_jobs.completed, staging_jobs.checked)
+"""
+
+# All 'ready' files with a given name, that are NOT from the given job ID.
+ALREADY_DONE_QUERY = """
+SELECT readytime 
+FROM files 
+WHERE (filename = %s) AND (job_id <> %s) AND ready 
+ORDER BY readytime DESC LIMIT 1
 """
 
 CPPATH = ['/usr/local/etc/staging.conf', '/usr/local/etc/staging-local.conf',
@@ -64,11 +72,26 @@ def process_message(msg, db):
     if filename is None:
         print("Invalid message, no 'filename' key: %s" % msg.value)
         return '', 0
-    query = "UPDATE files SET ready=true, readytime=now() WHERE filename=%s"
+
+    # If a file (in another job) was already 'ready', don't change the readytime value
+    query = "UPDATE files SET ready=true, readytime=now() WHERE filename=%s and not ready"
     with db:
         with db.cursor() as curs:
             curs.execute(query, (filename,))
             return filename, curs.rowcount
+
+
+def is_file_ready(filename):
+    """
+    Ask the Scout API for the status of this file, and return True if 'offlineblocks' is not equal to 0.
+
+    :param filename: File name to query
+    :return bool: True if the file is staged and ready.
+    """
+    result = requests.get(SCOUT_QUERY_URL, params={'pathname':filename})
+    resdict = result.json()
+    print('Got status for file %s: %s' % (filename, resdict))
+    return resdict['offlineblocks'] == 0
 
 
 def send_notification(job_id, timeout=False):
@@ -92,16 +115,45 @@ def send_notification(job_id, timeout=False):
     return result.status_code == 200
 
 
-def is_file_staged(filename):
+def check_job_for_existing_files(job_id, db):
     """
-    Ask the Scout API for the status of this file, and return True if 'offlineblocks' is not equal to 0.
-    :param filename: File name to query
-    :return bool: True if the file is staged and ready.
+    For each of the files in this job, find all the files that were in an already-processed job, and marked as ready
+    there. If there are any files that might already be staged, query Scout about their status from oldest to newest
+    until we find one that is in the cache. Then assume that all newer files will still be cached too, so update their
+    state in the files table.
+
+    :param job_id: Integer Job ID
+    :param db: Database connection object
+    :return: None
     """
-    result = requests.get(SCOUTURL, params={'pathname':filename})
-    resdict = result.json()
-    print('Got status for file %s: %s' % (filename, resdict))
-    return resdict['offlineblocks'] == 0
+    with db:
+        with db.cursor() as curs:
+            curs.execute('SELECT filename FROM files WHERE job_id=%s AND not ready', (job_id,))
+            rows = curs.fetchall()
+            file_dict = {}   # Dict with filename as key, and readytime as value
+            for filename in rows:
+                # Find the most recently 'ready' file with the same name but from a different job
+                curs.execute(ALREADY_DONE_QUERY, (filename, job_id))
+                result = curs.fetchall()
+                if result:
+                    file_dict[filename] = result[0][0]
+
+            if file_dict:
+                earliest_good = datetime.datetime(year=9999, month=0, day=0)
+                check_files = list(file_dict.keys())
+                check_files.sort(key=lambda x:file_dict[x])
+                for filename in check_files:
+                    readytime = file_dict[filename]
+                    if file_dict[filename] >= earliest_good:   # This file was ready more recently than one we know is still cached
+                        # Update all not-ready records for this file to say that it's still cached, with the old readytime
+                        curs.execute('UPDATE files SET ready = true, readytime = %s WHERE filename=%s and not ready',
+                                     (readytime, filename))
+                    else:   # This file is older than one we know is still cached
+                        if is_file_ready(filename=filename):   # If it is still cached
+                            # Update all not-ready records for this file to say that it's still cached, with the old readytime
+                            curs.execute('UPDATE files SET ready=true, readytime = %s WHERE filename=%s and not ready',
+                                         (readytime, filename))
+                            earliest_good = file_dict[filename]
 
 
 def HandleMessages(consumer):
@@ -149,11 +201,15 @@ def MonitorJobs():
                 rows = curs.fetchall()
 
                 # Loop over all jobs not marked as 'notified' (meaning ASVO has been told that it's either completed or failed)
-                for job_id, num_files, total_files, completed in rows:
+                for job_id, num_files, total_files, completed, checked in rows:
                     # If we now have all the files, mark it as complete
-                    if (num_files == total_files) and (not completed):
-                        curs.execute('UPDATE staging_jobs SET completed=true WHERE job_id=%s' % (job_id,))
-                        completed = True
+                    if (num_files == total_files):
+                        if (not completed):
+                            curs.execute('UPDATE staging_jobs SET completed=true WHERE job_id=%s' % (job_id,))
+                            completed = True
+                    elif not checked:  # Check to see if the files in this job were in some previous job, and still cached
+                        check_job_for_existing_files(job_id=job_id, db=mondb)
+                        curs.execute('UPDATE staging_jobs SET checked=true WHERE job_id=%s' % (job_id,))
                     # If it's complete, and it's been more than 10 minutes since we last tried notifing ASVO:
                     if completed and ((time.time() - notify_attempts.get(job_id, 0)) > RETRY_INTERVAL):
                         ok = send_notification(job_id)

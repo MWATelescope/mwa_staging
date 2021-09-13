@@ -6,6 +6,7 @@ CREATE TABLE staging_jobs (
     completed boolean,
     total_files integer,
     notified boolean,
+    checked boolean,
 
     PRIMARY KEY (job_id)
 );

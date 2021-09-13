@@ -22,7 +22,7 @@ import requests
 # SCOUT_URL = 'http://192.168.0.40:8081/v1/request/batchstage'
 
 # Dummy SCOUT URL - for testing:
-SCOUT_URL = 'http://localhost:8000/v1/request/batchstage'
+SCOUT_STAGE_URL = 'http://localhost:8000/v1/request/batchstage'
 
 CPPATH = ['/usr/local/etc/staging.conf', '/usr/local/etc/staging-local.conf',
           './staging.conf', './staging-local.conf']
@@ -129,7 +129,7 @@ def stage_files(job: Job):
     """
     # TODO - split into lots of individual requests to limit the number of filenames in the URL for each request
     params = {'path':job.files}
-    result = requests.post(SCOUT_URL, params=params)
+    result = requests.post(SCOUT_STAGE_URL, params=params)
     return result.status_code == 200
 
 
@@ -261,12 +261,15 @@ def dummy_scout_status(pathname: str = Query(...)):
     """
     Emulate Scout's staging server for development. Returns a dummy status for the file specified.
 
-    :param pathname: Filename to check the status for.
+    :param pathname: Filename to check the status for. If it starts with 'offline_', then the returned status will be offline
     :return: None
     """
     resp = ScoutFileStatus(pathname=pathname)
     resp.onlineblocks = 22
-    resp.offlineblocks = 1
+    if pathname.startswith('offline_'):
+        resp.offlineblocks = 1
+    else:
+        resp.offlineblocks = 0
     print("Pretending be Scout: Returning status for %s" % (pathname,))
     return resp
 
