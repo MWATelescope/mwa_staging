@@ -118,9 +118,9 @@ def send_notification(job_id, timeout=False):
 def check_job_for_existing_files(job_id, db):
     """
     For each of the files in this job, find all the files that were in an already-processed job, and marked as ready
-    there. If there are any files that might already be staged, query Scout about their status from oldest to newest
-    until we find one that is in the cache. Then assume that all newer files will still be cached too, so update their
-    state in the files table.
+    there. If there are any files with matching names that were staged for a different job in the past, and might still
+    be in the cache, query Scout about their status from oldest to newest until we find one that is in the cache. Then
+    assume that all newer files will still be cached too, so update their state in the files table.
 
     :param job_id: Integer Job ID
     :param db: Database connection object
