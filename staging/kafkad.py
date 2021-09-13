@@ -36,6 +36,7 @@ CHECK_INTERVAL = 60    # Check all job status details once every minute.
 RETRY_INTERVAL = 600   # Re-try notifying ASVO about completed jobs every 10 minutes until we succeed
 EXPIRY_TIME = 86400    # Return an error if it's been more than a day since a job was staged, and it's still not finished.
 
+# All jobs that haven't been notified as finished, that have at least one 'ready' file
 COMPLETION_QUERY = """
 SELECT files.job_id, count(*), staging_jobs.total_files, staging_jobs.completed, staging_jobs.checked
 FROM files JOIN staging_jobs USING(job_id)
@@ -43,7 +44,7 @@ WHERE ready AND (not staging_jobs.notified)
 GROUP BY (files.job_id, staging_jobs.total_files, staging_jobs.completed, staging_jobs.checked)
 """
 
-# All 'ready' files with a given name, that are NOT from the given job ID.
+# Most recent 'readytime' for this given filename, that is NOT from the given job ID.
 ALREADY_DONE_QUERY = """
 SELECT readytime 
 FROM files 
@@ -126,34 +127,46 @@ def check_job_for_existing_files(job_id, db):
     :param db: Database connection object
     :return: None
     """
-    with db:
-        with db.cursor() as curs:
-            curs.execute('SELECT filename FROM files WHERE job_id=%s AND not ready', (job_id,))
-            rows = curs.fetchall()
-            file_dict = {}   # Dict with filename as key, and readytime as value
-            for filename in rows:
-                # Find the most recently 'ready' file with the same name but from a different job
-                curs.execute(ALREADY_DONE_QUERY, (filename, job_id))
-                result = curs.fetchall()
-                if result:
-                    file_dict[filename] = result[0][0]
+    with db.cursor() as curs:
+        curs.execute('SELECT filename FROM files WHERE job_id=%s AND not ready', (job_id,))
+        rows = curs.fetchall()
+        file_dict = {}   # Dict with filename as key, and readytime as value
+        for row in rows:
+            filename = row[0]
+            print('    File %s from job %d:' % (filename, job_id))
+            # Find the most recently 'ready' file with the same name but from a different job
+            curs.execute(ALREADY_DONE_QUERY, (filename, job_id))
+            result = curs.fetchall()
+            if result:
+                print('        Found already done at %s' % result[0][0])
+                file_dict[filename] = result[0][0]
+            else:
+                print('        Not found previously.')
 
-            if file_dict:
-                earliest_good = datetime.datetime(year=9999, month=0, day=0)
-                check_files = list(file_dict.keys())
-                check_files.sort(key=lambda x:file_dict[x])
-                for filename in check_files:
-                    readytime = file_dict[filename]
-                    if file_dict[filename] >= earliest_good:   # This file was ready more recently than one we know is still cached
+        if file_dict:
+            earliest_good = datetime.datetime(year=9999, month=12, day=31, tzinfo=timezone.utc)
+            check_files = list(file_dict.keys())
+            check_files.sort(key=lambda x:file_dict[x])
+            if not is_file_ready(check_files[-1]):   # Check the most recently ready file first
+                return   # The most recently ready file is still in the cache, so none of the older ones will be
+
+            for filename in check_files:
+                print('    Previous file %s:' % filename)
+                readytime = file_dict[filename]
+                if file_dict[filename] >= earliest_good:   # This file was ready more recently than one we know is still cached
+                    print('        More recent than %s, so marked as ready' % earliest_good)
+                    # Update all not-ready records for this file to say that it's still cached, with the old readytime
+                    curs.execute('UPDATE files SET ready = true, readytime = %s WHERE filename=%s and not ready',
+                                 (readytime, filename))
+                else:   # This file is older than one we know is still cached
+                    if is_file_ready(filename=filename):   # If it is still cached
+                        print('        Is still ready.')
                         # Update all not-ready records for this file to say that it's still cached, with the old readytime
-                        curs.execute('UPDATE files SET ready = true, readytime = %s WHERE filename=%s and not ready',
+                        curs.execute('UPDATE files SET ready=true, readytime = %s WHERE filename=%s and not ready',
                                      (readytime, filename))
-                    else:   # This file is older than one we know is still cached
-                        if is_file_ready(filename=filename):   # If it is still cached
-                            # Update all not-ready records for this file to say that it's still cached, with the old readytime
-                            curs.execute('UPDATE files SET ready=true, readytime = %s WHERE filename=%s and not ready',
-                                         (readytime, filename))
-                            earliest_good = file_dict[filename]
+                        earliest_good = file_dict[filename]
+                    else:
+                        print('        Is not still ready.')
 
 
 def HandleMessages(consumer):
@@ -200,26 +213,35 @@ def MonitorJobs():
                 curs.execute(COMPLETION_QUERY)
                 rows = curs.fetchall()
 
-                # Loop over all jobs not marked as 'notified' (meaning ASVO has been told that it's either completed or failed)
+                # Loop over all jobs that haven't been notified as finished, that have at least one 'ready' file
                 for job_id, num_files, total_files, completed, checked in rows:
+                    print('Check completion on job %d' % job_id)
                     # If we now have all the files, mark it as complete
                     if (num_files == total_files):
+                        print('    job %d has %d out of %d files' % (job_id, num_files, total_files))
                         if (not completed):
+                            print('    job %d marked as complete.' % job_id)
                             curs.execute('UPDATE staging_jobs SET completed=true WHERE job_id=%s' % (job_id,))
                             completed = True
-                    elif not checked:  # Check to see if the files in this job were in some previous job, and still cached
-                        check_job_for_existing_files(job_id=job_id, db=mondb)
-                        curs.execute('UPDATE staging_jobs SET checked=true WHERE job_id=%s' % (job_id,))
                     # If it's complete, and it's been more than 10 minutes since we last tried notifing ASVO:
                     if completed and ((time.time() - notify_attempts.get(job_id, 0)) > RETRY_INTERVAL):
                         ok = send_notification(job_id)
-                        print("OK=%s" % ok)
+                        print("job %d, OK=%s" % (job_id, ok))
                         if ok:
                             curs.execute('UPDATE staging_jobs SET notified=true WHERE job_id=%s' % (job_id,))
                             if job_id in notify_attempts:
                                 del notify_attempts[job_id]
                         else:
                             notify_attempts[job_id] = time.time()
+
+                curs.execute('SELECT job_id FROM staging_jobs WHERE not notified AND not checked')
+                rows = curs.fetchall()
+                for row in rows:
+                    job_id = row[0]
+                    print('Check for already staged files on job %d' % job_id)
+                    check_job_for_existing_files(job_id=job_id, db=mondb)
+                    curs.execute('UPDATE staging_jobs SET checked=true WHERE job_id=%s' % (job_id,))
+
                 mondb.commit()
 
                 # Loop over all uncompleted jobs, to see if any have timed-out and need ASVO notified about the error
