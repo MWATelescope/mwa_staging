@@ -9,6 +9,7 @@ from configparser import ConfigParser as conparser
 import datetime
 from datetime import timezone
 import json
+import os
 from typing import Optional, List, Dict, Tuple
 
 import traceback
@@ -18,23 +19,19 @@ from psycopg2 import extras
 from pydantic import BaseModel
 import requests
 
-# Real SCOUT URL - do not use for testing
-# SCOUT_URL = 'http://192.168.0.40:8081/v1/request/batchstage'
+class ApiConfig():
+    def __init__(self):
+        self.DBUSER = os.getenv('DBUSER')
+        self.DBPASSWORD = os.getenv('DBPASSWORD')
+        self.DBHOST = os.getenv('DBHOST')
+        self.DBNAME = os.getenv('DBNAME')
 
-# Dummy SCOUT URL - for testing:
-SCOUT_STAGE_URL = 'http://localhost:8000/v1/request/batchstage'
+config = ApiConfig()
 
-CPPATH = ['/usr/local/etc/staging.conf', '/usr/local/etc/staging-local.conf',
-          './staging.conf', './staging-local.conf']
-CP = conparser(defaults={})
-CPfile = CP.read(CPPATH)
-if not CPfile:
-    print("None of the specified configuration files found by mwaconfig.py: %s" % (CPPATH,))
-
-DB = psycopg2.connect(user=CP['default']['dbuser'],
-                      password=CP['default']['dbpass'],
-                      host=CP['default']['dbhost'],
-                      database=CP['default']['dbname'])
+DB = psycopg2.connect(user=config.DBUSER,
+                      password=config.DBPASSWORD,
+                      host=config.DBHOST,
+                      database=config.DBNAME)
 
 CREATE_JOB = """
 INSERT INTO staging_jobs (job_id, created, completed, total_files, notified)

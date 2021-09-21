@@ -1,0 +1,93 @@
+version: '3'
+services:
+  api:
+    build:
+      dockerfile: Dockerfile.dev
+      context: ./staging
+    depends_on:
+      - "db"
+    environment:
+      SCOUT_STAGE_URL: http://localhost:8000/v1/request/batchstage
+      DBUSER: ${POSTGRES_USER}
+      DBPASSWORD: ${POSTGRES_PASSWORD}
+      DBHOST: db
+      DBNAME: staging
+    volumes:
+      - ./staging:/usr/src/app
+  db:
+    image: postgres
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+  pgadmin:
+    image: dpage/pgadmin4
+    restart: always
+    depends_on:
+      - "db"
+    environment:
+      PGADMIN_DEFAULT_EMAIL: test@test.com
+      PGADMIN_DEFAULT_PASSWORD: root
+    ports:
+      - '5050:80'
+    volumes:
+      - pgadmin:/var/lib/pgadmin
+  nginx:
+    build:
+      dockerfile: Dockerfile.dev
+      context: ./nginx
+    ports:
+      - '8000:8000'
+    depends_on:
+      - "api"
+  zookeeper:
+    image: zookeeper:3.7.0
+    ports:
+     - "2181:2181"
+  kafka:
+    image: wurstmeister/kafka
+    ports:
+      - '9092:9092'
+    expose:
+      - '9093'
+    depends_on:
+      - "zookeeper"
+    environment:
+      KAFKA_ADVERTISED_LISTENERS: INSIDE://kafka:9093,OUTSIDE://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INSIDE:PLAINTEXT,OUTSIDE:PLAINTEXT
+      KAFKA_LISTENERS: INSIDE://0.0.0.0:9093,OUTSIDE://0.0.0.0:9092
+      KAFKA_INTER_BROKER_LISTENER_NAME: INSIDE
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+    volumes:
+     - /var/run/docker.sock:/var/run/docker.sock
+    healthcheck:
+      test: ["CMD", "nc", "-vz", "localhost", "9092"]
+      interval: 30s
+      timeout: 10s
+      retries: 4
+  kafkad:
+    build:
+      dockerfile: Dockerfile.dev
+      context: ./staging
+    command: pipenv run python kafkad.py
+    restart: on-failure
+    depends_on: 
+      kafka:
+        condition: service_healthy
+    environment:
+      MWA_TOPIC: mwa
+      KAFKA_SERVER: kafka:9092
+      ASVO_URL: http://api:8000/jobresult
+      SCOUT_QUERY_URL: http://api:8000/v1/file
+      DBUSER: ${POSTGRES_USER}
+      DBPASSWORD: ${POSTGRES_PASSWORD}
+      DBHOST: db
+      DBNAME: staging
+    volumes:
+      - ./staging:/usr/src/app
+volumes:
+  pgdata:
+  pgadmin:

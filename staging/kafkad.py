@@ -13,24 +13,19 @@ To test with manually generated Kafka messages, eg:
 >>> p.send('mwa', {'filename':'foo'})
 """
 
-from configparser import ConfigParser as conparser
-import datetime
-from datetime import timezone
+import os
 import json
+import datetime
 import threading
 import time
 import traceback
-
-from kafka import KafkaConsumer
-
 import psycopg2
-
 import requests
 
-MWA_TOPIC = "mwa"    # Kafka topic to listen on
-KAFKA_SERVERS = ['localhost:9092']
-ASVO_URL = 'http://localhost:8000/jobresult'
-SCOUT_QUERY_URL = 'http://localhost:8000/v1/file'
+from datetime import timezone
+from configparser import ConfigParser as conparser
+from kafka import KafkaConsumer
+
 
 CHECK_INTERVAL = 60    # Check all job status details once every minute.
 RETRY_INTERVAL = 600   # Re-try notifying ASVO about completed jobs every 10 minutes until we succeed
@@ -52,12 +47,20 @@ WHERE (filename = %s) AND (job_id <> %s) AND ready
 ORDER BY readytime DESC LIMIT 1
 """
 
-CPPATH = ['/usr/local/etc/staging.conf', '/usr/local/etc/staging-local.conf',
-          './staging.conf', './staging-local.conf']
-CP = conparser(defaults={})
-CPfile = CP.read(CPPATH)
-if not CPfile:
-    print("None of the specified configuration files found by mwaconfig.py: %s" % (CPPATH,))
+
+class KafkadConfig():
+    def __init__(self):
+        self.MWA_TOPIC = os.getenv('MWA_TOPIC') # Kafka topic to listen on
+        self.KAFKA_SERVER = os.getenv('KAFKA_SERVER')
+        self.ASVO_URL = os.getenv('ASVO_URL')
+        self.SCOUT_QUERY_URL = os.getenv('SCOUT_QUERY_URL')
+        self.DBUSER = os.getenv('DBUSER')
+        self.DBPASSWORD = os.getenv('DBPASSWORD')
+        self.DBHOST = os.getenv('DBHOST')
+        self.DBNAME = os.getenv('DBNAME')
+
+
+config = KafkadConfig()
 
 
 def process_message(msg, db):
@@ -89,7 +92,7 @@ def is_file_ready(filename):
     :param filename: File name to query
     :return bool: True if the file is staged and ready.
     """
-    result = requests.get(SCOUT_QUERY_URL, params={'pathname':filename})
+    result = requests.get(config.SCOUT_QUERY_URL, params={'pathname':filename})
     resdict = result.json()
     print('Got status for file %s: %s' % (filename, resdict))
     return resdict['offlineblocks'] == 0
@@ -112,7 +115,7 @@ def send_notification(job_id, timeout=False):
     else:
         post_data['ok'] = True
 
-    result = requests.post(ASVO_URL, data=json.dumps(post_data))
+    result = requests.post(config.ASVO_URL, data=json.dumps(post_data))
     return result.status_code == 200
 
 
@@ -176,10 +179,10 @@ def HandleMessages(consumer):
 
     :return:
     """
-    msgdb = psycopg2.connect(user=CP['default']['dbuser'],
-                             password=CP['default']['dbpass'],
-                             host=CP['default']['dbhost'],
-                             database=CP['default']['dbname'])
+    msgdb = psycopg2.connect(user=config.DBUSER,
+                             password=config.DBPASSWORD,
+                             host=config.DBHOST,
+                             database=config.DBNAME)
     for msg in consumer:
         try:
             filename, rowcount = process_message(msg, msgdb)
@@ -203,10 +206,10 @@ def MonitorJobs():
     :return:
     """
     notify_attempts = {}   # Dict with job_id as the key, and unix timestamp as the value for the last attempt
-    mondb = psycopg2.connect(user=CP['default']['dbuser'],
-                             password=CP['default']['dbpass'],
-                             host=CP['default']['dbhost'],
-                             database=CP['default']['dbname'])
+    mondb = psycopg2.connect(user=config.DBUSER,
+                             password=config.DBPASSWORD,
+                             host=config.DBHOST,
+                             database=config.DBNAME)
     while True:
         with mondb:
             with mondb.cursor() as curs:
@@ -265,8 +268,8 @@ def MonitorJobs():
 
 
 if __name__ == '__main__':
-    consumer = KafkaConsumer(MWA_TOPIC,
-                             bootstrap_servers=KAFKA_SERVERS,
+    consumer = KafkaConsumer(config.MWA_TOPIC,
+                             bootstrap_servers=config.KAFKA_SERVER,
                              auto_offset_reset='earliest',
                              enable_auto_commit=False,
                              group_id='mwa_staging',
