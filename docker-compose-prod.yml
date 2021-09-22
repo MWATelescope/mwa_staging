@@ -37,10 +37,6 @@ services:
       dockerfile: Dockerfile.dev
       context: ./staging
     command: pipenv run python kafkad.py
-    restart: on-failure
-    depends_on: 
-      kafka:
-        condition: service_healthy
     environment:
       MWA_TOPIC: mwa
       KAFKA_SERVER: kafka:9092
