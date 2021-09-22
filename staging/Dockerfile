@@ -14,6 +14,4 @@ RUN pipenv install --deploy --ignore-pipfile
 
 COPY . .
 
-EXPOSE 8000
-
 CMD ["pipenv", "run", "uvicorn", "staged:app", "--host", "0.0.0.0"]

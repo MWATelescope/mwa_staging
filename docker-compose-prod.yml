@@ -13,7 +13,9 @@ services:
       DBHOST: db
       DBNAME: staging
   db:
-    image: postgres
+    build:
+      dockerfile: Dockerfile
+      context: ./postgres
     restart: always
     environment:
       POSTGRES_USER: ${POSTGRES_USER}

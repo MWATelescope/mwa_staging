@@ -15,7 +15,9 @@ services:
     volumes:
       - ./staging:/usr/src/app
   db:
-    image: postgres
+    build:
+      dockerfile: Dockerfile
+      context: ./postgres
     restart: always
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
@@ -40,6 +42,7 @@ services:
     ports:
       - '8000:8000'
       - '5050:5050'
+      - '9092:9092'
     depends_on:
       - "api"
   zookeeper:
@@ -48,8 +51,6 @@ services:
      - "2181:2181"
   kafka:
     image: wurstmeister/kafka
-    ports:
-      - '9092:9092'
     expose:
       - '9093'
     depends_on:
@@ -69,7 +70,7 @@ services:
       retries: 4
   kafkad:
     build:
-      dockerfile: Dockerfile.dev
+      dockerfile: Dockerfile
       context: ./staging
     command: pipenv run python kafkad.py
     restart: on-failure

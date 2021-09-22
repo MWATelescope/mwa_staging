@@ -1,5 +1,5 @@
 
-CREATE TABLE staging_jobs (
+CREATE TABLE IF NOT EXISTS staging_jobs (
     -- One row per staging job
     job_id integer,
     created timestamp with time zone,
@@ -11,7 +11,7 @@ CREATE TABLE staging_jobs (
     PRIMARY KEY (job_id)
 );
 
-CREATE TABLE files (
+CREATE TABLE IF NOT EXISTS files (
     -- One row per file in ach job. The same filename in multiple jobs will be in multiple rows in this table.
     job_id integer,
     filename text,
@@ -21,4 +21,4 @@ CREATE TABLE files (
     PRIMARY KEY (job_id, filename)
 );
 
-CREATE INDEX files_filename ON files (filename);
+CREATE INDEX IF NOT EXISTS files_filename ON files (filename);
