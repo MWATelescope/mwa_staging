@@ -30,6 +30,8 @@ services:
       - '80:80'
     depends_on:
       - "api"
+    volumes:
+      - ./config:/etc/nginx/certs
   kafkad:
     build:
       dockerfile: Dockerfile.dev
