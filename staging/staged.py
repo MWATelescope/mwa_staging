@@ -25,6 +25,7 @@ class ApiConfig():
         self.DBPASSWORD = os.getenv('DBPASSWORD')
         self.DBHOST = os.getenv('DBHOST')
         self.DBNAME = os.getenv('DBNAME')
+        self.SCOUT_STAGE_URL = os.getenv('SCOUT_STAGE_URL')
 
 config = ApiConfig()
 
@@ -126,7 +127,7 @@ def stage_files(job: Job):
     """
     # TODO - split into lots of individual requests to limit the number of filenames in the URL for each request
     params = {'path':job.files}
-    result = requests.post(SCOUT_STAGE_URL, params=params)
+    result = requests.post(config.SCOUT_STAGE_URL, params=params)
     return result.status_code == 200
 
 
