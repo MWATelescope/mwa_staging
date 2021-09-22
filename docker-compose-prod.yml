@@ -34,7 +34,7 @@ services:
       - ./config:/etc/nginx/certs
   kafkad:
     build:
-      dockerfile: Dockerfile.dev
+      dockerfile: Dockerfile
       context: ./staging
     command: pipenv run python kafkad.py
     environment:
