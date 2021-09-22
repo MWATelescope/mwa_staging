@@ -2,7 +2,7 @@ version: '3'
 services:
   api:
     build:
-      dockerfile: Dockerfile.dev
+      dockerfile: Dockerfile
       context: ./staging
     depends_on:
       - "db"
@@ -31,8 +31,6 @@ services:
     environment:
       PGADMIN_DEFAULT_EMAIL: test@test.com
       PGADMIN_DEFAULT_PASSWORD: root
-    ports:
-      - '5050:80'
     volumes:
       - pgadmin:/var/lib/pgadmin
   nginx:
@@ -41,6 +39,7 @@ services:
       context: ./nginx
     ports:
       - '8000:8000'
+      - '5050:5050'
     depends_on:
       - "api"
   zookeeper:
