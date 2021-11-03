@@ -22,3 +22,14 @@ CREATE TABLE IF NOT EXISTS files (
 );
 
 CREATE INDEX IF NOT EXISTS files_filename ON files (filename);
+
+CREATE TABLE IF NOT EXISTS kafkad_heartbeat (
+    -- Updated every few seconds if the Kafka Daemon (kafkad.py) is running
+    update_time timestamp with time zone,
+    last_message timestamp with time zone,
+    kafka_alive boolean
+);
+
+-- Delete stale table contents, and insert a single status row, ready for software startup
+DELETE FROM kafkad_heartbeat WHERE true;
+INSERT INTO kafkad_heartbeat (update_time, last_message, kafka_alive) VALUES (NULL, NULL, false);

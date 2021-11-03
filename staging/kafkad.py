@@ -23,8 +23,7 @@ import psycopg2
 import requests
 
 from datetime import timezone
-from configparser import ConfigParser as conparser
-from kafka import KafkaConsumer
+from kafka import errors, KafkaConsumer
 
 
 CHECK_INTERVAL = 60    # Check all job status details once every minute.
@@ -47,6 +46,15 @@ WHERE (filename = %s) AND (job_id <> %s) AND ready
 ORDER BY readytime DESC LIMIT 1
 """
 
+# Update the kafka_heartbeat table with the current status
+UPDATE_HEARTBEAT_QUERY = """
+UPDATE kafkad_heartbeat 
+SET update_time = now(), 
+    kafka_alive = %s,
+    last_message = %s
+WHERE true
+"""
+
 
 class KafkadConfig():
     def __init__(self):
@@ -62,6 +70,9 @@ class KafkadConfig():
 
 config = KafkadConfig()
 
+# When the most recent valid Kafka file status message was processed
+LAST_KAFKA_MESSAGE = None
+
 
 def process_message(msg, db):
     """
@@ -72,10 +83,13 @@ def process_message(msg, db):
     :param db: Database connection object
     :return: Number of rows updated in the files table
     """
+    global LAST_KAFKA_MESSAGE
     filename = msg.value.get('filename', None)
     if filename is None:
         print("Invalid message, no 'filename' key: %s" % msg.value)
         return '', 0
+
+    LAST_KAFKA_MESSAGE = datetime.datetime.utcnow()
 
     # If a file (in another job) was already 'ready', don't change the readytime value
     query = "UPDATE files SET ready=true, readytime=now() WHERE filename=%s and not ready"
@@ -197,7 +211,7 @@ def HandleMessages(consumer):
             consumer.commit()   # Tell the Kafka server we've processed that message, so we don't see it again.
 
 
-def MonitorJobs():
+def MonitorJobs(consumer):
     """
     Runs continously, keeping track of job progress, and notifying ASVO as jobs are completed, or
     as they time out before completion.
@@ -216,6 +230,7 @@ def MonitorJobs():
                 curs.execute(COMPLETION_QUERY)
                 rows = curs.fetchall()
 
+                print('Checking to see if jobs are complete')
                 # Loop over all jobs that haven't been notified as finished, that have at least one 'ready' file
                 for job_id, num_files, total_files, completed, checked in rows:
                     print('Check completion on job %d' % job_id)
@@ -224,29 +239,31 @@ def MonitorJobs():
                         print('    job %d has %d out of %d files' % (job_id, num_files, total_files))
                         if (not completed):
                             print('    job %d marked as complete.' % job_id)
-                            curs.execute('UPDATE staging_jobs SET completed=true WHERE job_id=%s' % (job_id,))
+                            curs.execute('UPDATE staging_jobs SET completed=true WHERE job_id=%s', (job_id,))
                             completed = True
                     # If it's complete, and it's been more than 10 minutes since we last tried notifing ASVO:
                     if completed and ((time.time() - notify_attempts.get(job_id, 0)) > RETRY_INTERVAL):
                         ok = send_notification(job_id)
                         print("job %d, OK=%s" % (job_id, ok))
                         if ok:
-                            curs.execute('UPDATE staging_jobs SET notified=true WHERE job_id=%s' % (job_id,))
+                            curs.execute('UPDATE staging_jobs SET notified=true WHERE job_id=%s', (job_id,))
                             if job_id in notify_attempts:
                                 del notify_attempts[job_id]
                         else:
                             notify_attempts[job_id] = time.time()
 
+                print('Looking to see if any jobs need to be checked for already-staged files')
                 curs.execute('SELECT job_id FROM staging_jobs WHERE not notified AND not checked')
                 rows = curs.fetchall()
                 for row in rows:
                     job_id = row[0]
                     print('Check for already staged files on job %d' % job_id)
                     check_job_for_existing_files(job_id=job_id, db=mondb)
-                    curs.execute('UPDATE staging_jobs SET checked=true WHERE job_id=%s' % (job_id,))
+                    curs.execute('UPDATE staging_jobs SET checked=true WHERE job_id=%s', (job_id,))
 
                 mondb.commit()
 
+                print('Check to see if any completed files need ASVO notified again')
                 # Loop over all uncompleted jobs, to see if any have timed-out and need ASVO notified about the error
                 curs.execute("SELECT job_id, created FROM staging_jobs WHERE NOT completed")
                 rows = curs.fetchall()
@@ -255,15 +272,26 @@ def MonitorJobs():
                         ok = send_notification(job_id, timeout=True)
                         print("OK=%s" % ok)
                         if ok:
-                            curs.execute('UPDATE staging_jobs SET notified=true WHERE job_id=%s' % (job_id,))
+                            curs.execute('UPDATE staging_jobs SET notified=true WHERE job_id=%s', (job_id,))
                             if job_id in notify_attempts:
                                 del notify_attempts[job_id]
                         else:
                             notify_attempts[job_id] = time.time()
                 mondb.commit()
 
+                print('Check to see if the Kafka daemon is still talking to us')
+                try:
+                    consumer.topics()   # Make sure the remote end responds
+                    connection_alive = True
+                except errors.KafkaError:
+                    connection_alive = False
+                print('Updating heartbeat table')
+                curs.execute(UPDATE_HEARTBEAT_QUERY, (connection_alive, LAST_KAFKA_MESSAGE))
+                mondb.commit()
+
                 # TODO - add a query to check for and delete the job (and files) for old (already notified) jobs
 
+                print('Sleeping')
                 time.sleep(CHECK_INTERVAL)  # Check job status at regular intervals
 
 
@@ -276,7 +304,7 @@ if __name__ == '__main__':
                              value_deserializer=lambda x: json.loads(x.decode('utf-8')))
 
     # Start the thread that monitors job state and sends completion notifications as necessary
-    jobthread = threading.Thread(target=MonitorJobs, name='MonitorJobs')
+    jobthread = threading.Thread(target=MonitorJobs, name='MonitorJobs', args=(consumer,))
     jobthread.daemon = True  # Stop this thread when the main program exits.
     jobthread.start()
 

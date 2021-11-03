@@ -5,12 +5,10 @@ messages about those files, and return the results to ASVO.
 This file implements the REST API for accepting requests from ASVO, and another process will handle Kafka messages.
 """
 
-from configparser import ConfigParser as conparser
 import datetime
 from datetime import timezone
-import json
 import os
-from typing import Optional, List, Dict, Tuple
+from typing import Optional
 
 import traceback
 from fastapi import FastAPI, Query, Response, status
@@ -19,6 +17,7 @@ from psycopg2 import extras
 from pydantic import BaseModel
 import requests
 
+
 class ApiConfig():
     def __init__(self):
         self.DBUSER = os.getenv('DBUSER')
@@ -26,6 +25,7 @@ class ApiConfig():
         self.DBHOST = os.getenv('DBHOST')
         self.DBNAME = os.getenv('DBNAME')
         self.SCOUT_STAGE_URL = os.getenv('SCOUT_STAGE_URL')
+
 
 config = ApiConfig()
 
@@ -77,7 +77,7 @@ class JobResult(BaseModel):
 
 class Job(BaseModel):
     job_id: int       # Integer ASVO job ID
-    files: List[str]  # A list of filenames, including full paths
+    files: list[str]  # A list of filenames, including full paths
 
 
 class JobStatus(BaseModel):
@@ -87,7 +87,21 @@ class JobStatus(BaseModel):
     total_files: Optional[int] = None  # Total number of files in this job
     # The files attribute is a list of (ready:bool, readytime:int) tuples where ready_time
     # is the time when that file was staged (or None)
-    files: Optional[Dict[str, Tuple[bool, int]]] = {"":(False, 0)}
+    files: dict[str, tuple] = {"":(False, 0)}     # Specifying the tuple type as tuple(bool, int) crashes the FastAPI doc generator
+
+
+class GlobalStatistics(BaseModel):
+    kafkad_heartbeat: Optional[float] # Timestamp when kafkad.py last updated its status table
+    kafka_alive: bool = False         # Is the remote kafka daemon alive?
+    last_message: Optional[float]     # Timestamp when the last valid file status message was received
+    completed_jobs: int = 0           # Total number of jobs with all files staged
+    incomplete_jobs: int = 0          # Number of jobs waiting for files to be staged
+    ready_files: int = 0              # Total number of files staged so far
+    unready_files: int = 0            # Number of files we are waiting to be staged
+
+
+class ErrorResult(BaseModel):
+    errormsg: str   # Error message returned to caller
 
 
 class ScoutFileStatus(BaseModel):
@@ -115,7 +129,7 @@ class ScoutFileStatus(BaseModel):
     flagsstring: str = ""     # eg "",
     archdone: bool = True     # eg true,
     uuid: str = ""            # eg "8e9825f9-291d-415e-bb1f-38d8f865dcac",
-    copies: List = []         # Complex sub-structure that we'll ignore for this dummy service
+    copies: list = []         # Complex sub-structure that we'll ignore for this dummy service
 
 
 def stage_files(job: Job):
@@ -134,7 +148,9 @@ def stage_files(job: Job):
 app = FastAPI()
 
 
-@app.post("/staging/", status_code=status.HTTP_201_CREATED)
+@app.post("/staging/",
+          status_code=status.HTTP_201_CREATED,
+          responses={403:{'model':ErrorResult}, 500:{'model':ErrorResult}, 502:{'model':ErrorResult}})
 def new_job(job: Job, response:Response):
     """
     POST API to create a new staging job. Accepts a JSON dictionary defined above by the Job() class,
@@ -150,33 +166,40 @@ def new_job(job: Job, response:Response):
                 curs.execute('SELECT count(*) FROM staging_jobs WHERE job_id = %s' % (job.job_id,))
                 if curs.fetchone()[0] > 0:
                     response.status_code = status.HTTP_403_FORBIDDEN
-                    print("Can't create job %d, because it already exists." % job.job_id)
-                    return
+                    err_msg = "Can't create job %d, because it already exists." % job.job_id
+                    return ErrorResult(errormsg=err_msg)
                 curs.execute(CREATE_JOB, (job.job_id,                           # job_id
                                           datetime.datetime.now(timezone.utc),  # created
                                           len(job.files)))                      # total_files
                 psycopg2.extras.execute_values(curs, WRITE_FILES, [(job.job_id, f, False) for f in job.files])
 
                 ok = False
+                exc_str = ''
                 try:
                     ok = stage_files(job)   # Actually stage these files
                 except Exception:  # Couldn't stage the files
-                    print(traceback.format_exc())
+                    exc_str = traceback.format_exc()
+                    print(exc_str)
 
                 if not ok:
-                    print('Error contacting Scout to stage files for job %d, job not created.' % job.job_id)
+                    err_msg = 'Error contacting Scout to stage files for job %d, job not created: %s' % (job.job_id, exc_str)
                     DB.rollback()    # Reverse the job and file creation in the database
                     response.status_code = status.HTTP_502_BAD_GATEWAY
+                    print(err_msg)
+                    return ErrorResult(errormsg=err_msg)
                 else:
                     print('New job %d created with these files: %s' % (job.job_id, job.files))
         return
     except Exception:  # Any other errors
-        print(traceback.format_exc())
         response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+        exc_str = traceback.format_exc()
+        print(exc_str)
+        return ErrorResult(errormsg='Exception creating staging job %d: %s' % (job.job_id, exc_str))
 
 
-# TODO - find out why specifing the response model here throws an exception in the server when you load the /docs URL
-@app.get("/staging/", status_code=status.HTTP_200_OK)   # , response_model=Optional[JobStatus])
+@app.get("/staging/",
+         status_code=status.HTTP_200_OK,
+         responses={200:{'model':JobStatus}, 404:{'model':ErrorResult}, 500:{'model':ErrorResult}})
 def read_status(job_id: int, response:Response):
     """
     GET API to read status details about an existing staging job. Accepts a single parameter in the
@@ -194,10 +217,10 @@ def read_status(job_id: int, response:Response):
                 rows = curs.fetchall()
                 if not rows:   # Job ID not found
                     response.status_code = status.HTTP_404_NOT_FOUND
-                    return
+                    return ErrorResult(errormsg='Job %d not found' % job_id)
                 if len(rows) > 1:   # Multiple rows for the same Job ID
                     response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
-                    return
+                    return ErrorResult(errormsg='Job %d has multiple rows!' % job_id)
                 created, completed, total_files = rows[0]
 
                 files = {}
@@ -216,11 +239,14 @@ def read_status(job_id: int, response:Response):
                 return result
     except Exception:
         response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
-        print(traceback.format_exc())
-        return
+        exc_str = traceback.format_exc()
+        print(exc_str)
+        return ErrorResult(errormsg='Exception staging job %d: %s' % (job_id, exc_str))
 
 
-@app.delete("/staging/", status_code=status.HTTP_200_OK)
+@app.delete("/staging/",
+            status_code=status.HTTP_200_OK,
+            responses={404:{'model':ErrorResult}, 500:{'model':ErrorResult}})
 def delete_job(job_id: int, response:Response):
     """
     POST API to delete a staging job. Accepts an integer job_id value, to be deleted.
@@ -235,16 +261,79 @@ def delete_job(job_id: int, response:Response):
                 curs.execute(DELETE_JOB % (job_id,))
                 if curs.rowcount == 0:
                     response.status_code = status.HTTP_404_NOT_FOUND
-                    return
+                    return ErrorResult(errormsg='Job %d not found' % job_id)
                 curs.execute(DELETE_FILES, (job_id,))
                 print('Job %d DELETED.' % job_id)
         return
     except Exception:  # Any other errors
         response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+        exc_str = traceback.format_exc()
+        print(exc_str)
+        return ErrorResult(errormsg='Exception staging job %d: %s' % (job_id, exc_str))
 
 
-@app.post("/v1/request/batchstage", status_code=status.HTTP_200_OK)
-def dummy_scout_stage(path: Optional[List[str]] = Query(...)):  # TODO - find out how to handle multiple values
+@app.get("/ping")
+def ping():
+    """
+    GET API to return nothing, with a 200 status code, if we are alive. If we're not alive, this function won't be
+    called at all.
+
+    :return: None
+    """
+    return
+
+
+@app.get("/get_stats",
+         status_code=status.HTTP_200_OK,
+         responses={200:{'model':GlobalStatistics}, 500:{'model':ErrorResult}})
+def get_stats(response:Response):
+    """
+    GET API to return an overall job and file statistics for this process (the staging web server)
+    and the Kafka daemon (kafkad.py)
+
+    :return: GlobalStatus object
+    """
+    try:
+        with DB:
+            with DB.cursor() as curs:
+                curs.execute("SELECT update_time, last_message, kafka_alive FROM kafkad_heartbeat")
+                kafkad_heartbeat, last_message, kafka_alive = curs.fetchall()[0]
+                curs.execute("SELECT count(*) FROM staging_jobs WHERE completed")
+                completed_jobs = curs.fetchall()[0][0]
+                curs.execute("SELECT count(*) FROM staging_jobs WHERE completed")
+                incomplete_jobs = curs.fetchall()[0][0]
+                curs.execute("SELECT count(*) FROM files WHERE ready")
+                ready_files = curs.fetchall()[0][0]
+                curs.execute("SELECT count(*) FROM files WHERE not ready")
+                unready_files = curs.fetchall()[0][0]
+
+        if kafkad_heartbeat is not None:
+            hb = kafkad_heartbeat.timestamp()
+        else:
+            hb = None
+        if last_message is not None:
+            lm = last_message.timestamp()
+        else:
+            lm = None
+
+        result = GlobalStatistics(kafkad_heartbeat=hb,
+                                  kafka_alive=kafka_alive,
+                                  last_message=lm,
+                                  completed_jobs=completed_jobs,
+                                  incomplete_jobs=incomplete_jobs,
+                                  ready_files=ready_files,
+                                  unready_files=unready_files)
+        return result
+    except Exception:
+        response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+        exc_str = traceback.format_exc()
+        print(exc_str)
+        return ErrorResult(errormsg='Exception getting status: %s' % (exc_str,))
+
+
+@app.post("/v1/request/batchstage",
+          status_code=status.HTTP_200_OK)
+def dummy_scout_stage(path: Optional[list[str]] = Query(...)):  # TODO - find out how to handle multiple values
     """
     Emulate Scout's staging server for development. Always returns 200/OK and ignores the file list.
 
@@ -254,7 +343,9 @@ def dummy_scout_stage(path: Optional[List[str]] = Query(...)):  # TODO - find ou
     print("Pretending be Scout: Staging: %s" % (path,))
 
 
-@app.get("/v1/file", status_code=status.HTTP_200_OK, response_model=ScoutFileStatus)
+@app.get("/v1/file",
+         status_code=status.HTTP_200_OK,
+         response_model=ScoutFileStatus)
 def dummy_scout_status(pathname: str = Query(...)):
     """
     Emulate Scout's staging server for development. Returns a dummy status for the file specified.
@@ -272,7 +363,8 @@ def dummy_scout_status(pathname: str = Query(...)):
     return resp
 
 
-@app.post("/jobresult", status_code=status.HTTP_200_OK)
+@app.post("/jobresult",
+          status_code=status.HTTP_200_OK)
 def dummy_asvo(result: JobResult):
     """
     Emulate ASVO server for development. Always returns 200/OK.
