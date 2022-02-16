@@ -21,6 +21,7 @@ import time
 import traceback
 import psycopg2
 import requests
+from requests.auth import AuthBase
 
 from datetime import timezone
 from kafka import errors, KafkaConsumer
@@ -62,6 +63,7 @@ class KafkadConfig():
         self.KAFKA_SERVER = os.getenv('KAFKA_SERVER')
         self.ASVO_URL = os.getenv('ASVO_URL')
         self.SCOUT_QUERY_URL = os.getenv('SCOUT_QUERY_URL')
+        self.SCOUT_API_TOKEN = os.getenv('SCOUT_API_TOKEN')
         self.DBUSER = os.getenv('DBUSER')
         self.DBPASSWORD = os.getenv('DBPASSWORD')
         self.DBHOST = os.getenv('DBHOST')
@@ -72,6 +74,30 @@ config = KafkadConfig()
 
 # When the most recent valid Kafka file status message was processed
 LAST_KAFKA_MESSAGE = None
+
+
+
+class ScoutAuth(AuthBase):
+    """Attaches the 'Authorization: Bearer $TOKEN' header to the request, for authenticating Scout API
+       requests.
+    """
+    def __init__(self, token):
+        """
+        Store the API token
+
+        :param token: token string from Scout's /v1/security/login endpoint
+        """
+        self.token = token
+
+    def __call__(self, r):
+        """
+        Modify the request by adding the Scout token to the header
+
+        :param r: request object
+        :return: modified request object
+        """
+        r.headers['Authorization'] = 'Bearer %s' % self.token
+        return r
 
 
 def process_message(msg, db):
@@ -106,7 +132,7 @@ def is_file_ready(filename):
     :param filename: File name to query
     :return bool: True if the file is staged and ready.
     """
-    result = requests.get(config.SCOUT_QUERY_URL, params={'pathname':filename})
+    result = requests.get(config.SCOUT_QUERY_URL, params={'path':filename}, auth=ScoutAuth(config.SCOUT_API_TOKEN))
     resdict = result.json()
     print('Got status for file %s: %s' % (filename, resdict))
     return resdict['offlineblocks'] == 0
