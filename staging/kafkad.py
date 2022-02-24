@@ -58,6 +58,8 @@ WHERE true
 
 
 class KafkadConfig():
+    """Config class, used to load configuration data from environment variables.
+    """
     def __init__(self):
         self.MWA_TOPIC = os.getenv('MWA_TOPIC') # Kafka topic to listen on
         self.KAFKA_SERVER = os.getenv('KAFKA_SERVER')
@@ -76,10 +78,9 @@ config = KafkadConfig()
 LAST_KAFKA_MESSAGE = None
 
 
-
 class ScoutAuth(AuthBase):
     """Attaches the 'Authorization: Bearer $TOKEN' header to the request, for authenticating Scout API
-       requests.
+       requests, in calls to the requests module.
     """
     def __init__(self, token):
         """
@@ -104,6 +105,9 @@ def process_message(msg, db):
     """
     Handle a single message from Kafka, when a new file has been staged. Here msg.value has already
     been de-serialised, so it's a Python dictionary, with contents TBD.
+
+    For development, msg.value['filename'] is assumed to contain the path+filename of the file that has
+    just been staged. TODO - fix this when we know what Kafka messages will actually contain.
 
     :param msg: Named Tuple from Kafka, with attributes 'topic', 'partition', 'offset', 'key' and 'value'
     :param db: Database connection object

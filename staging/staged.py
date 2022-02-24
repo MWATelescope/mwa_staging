@@ -11,15 +11,19 @@ import os
 from typing import Optional
 
 import traceback
-from fastapi import FastAPI, Query, Response, status
+from fastapi import FastAPI, BackgroundTasks, Query, Response, status
 import psycopg2
 from psycopg2 import extras
 from pydantic import BaseModel
 import requests
 from requests.auth import AuthBase
 
+from mwa_files import NewMWAJob as NewJob
+
 
 class ApiConfig():
+    """Config class, used to load configuration data from environment variables.
+    """
     def __init__(self):
         self.DBUSER = os.getenv('DBUSER')
         self.DBPASSWORD = os.getenv('DBPASSWORD')
@@ -27,6 +31,7 @@ class ApiConfig():
         self.DBNAME = os.getenv('DBNAME')
         self.SCOUT_STAGE_URL = os.getenv('SCOUT_STAGE_URL')
         self.SCOUT_API_TOKEN = os.getenv('SCOUT_API_TOKEN')
+        self.DATA_FILES_URL = os.getenv('DATA_FILES_URL')
 
 
 config = ApiConfig()
@@ -85,22 +90,26 @@ WHERE job_id = %s
 class JobResult(BaseModel):
     """
     Used by the dummy ASVO server endpoint to pass in the results of a job once all files are staged.
+
+    job_id:  Integer ASVO job ID\n
+    ok:      True if the job succeeded, False if it failed.\n
     """
     job_id: int   # Integer ASVO job ID
     ok: bool      # True if the job succeeded, False if it failed.
 
 
-class Job(BaseModel):
-    """
-    Used by the 'new job' endpoint to pass in the job ID and list of files.
-    """
-    job_id: int       # Integer ASVO job ID
-    files: list[str]  # A list of filenames, including full paths
-
-
 class JobStatus(BaseModel):
     """
     Used by the 'read status' endpoint to return the status of a single job.
+
+    job_id:       Integer ASVO job ID\n
+    created:      Integer unix timestamp when the job was created\n
+    completed:    True if all files have been staged\n
+    total_files:  Total number of files in this job\n
+    files:        Specifying the tuple type as tuple(bool, int) crashes the FastAPI doc generator\n
+
+    The files attribute is a list of (ready:bool, readytime:int) tuples where ready_time is the time when that file
+    was staged (or None)
     """
     job_id: int       # Integer ASVO job ID
     created: Optional[int] = None      # Integer unix timestamp when the job was created
@@ -114,6 +123,14 @@ class JobStatus(BaseModel):
 class GlobalStatistics(BaseModel):
     """
     Used by the 'get stats' endpoint to return the kafka/kafkad/staged status and health data.
+
+    kafkad_heartbeat:   Timestamp when kafkad.py last updated its status table\n
+    kafka_alive: bool   Is the remote kafka daemon alive?\n
+    last_message:       Timestamp when the last valid file status message was received\n
+    completed_jobs:     Total number of jobs with all files staged\n
+    incomplete_jobs:    Number of jobs waiting for files to be staged\n
+    ready_files: i      Total number of files staged so far\n
+    unready_files:      Number of files we are waiting to be staged\n
     """
     kafkad_heartbeat: Optional[float] # Timestamp when kafkad.py last updated its status table
     kafka_alive: bool = False         # Is the remote kafka daemon alive?
@@ -127,6 +144,8 @@ class GlobalStatistics(BaseModel):
 class JobList(BaseModel):
     """
     Used by the 'list all jobs' endoint to return a list of all jobs.
+
+    jobs:   Key is job ID, value is (staged_files, total_files, completed)
     """
     jobs: dict[int, tuple] = {}  # Key is job ID, value is (staged_files, total_files, completed)
 
@@ -134,6 +153,8 @@ class JobList(BaseModel):
 class ErrorResult(BaseModel):
     """
     Used by all jobs, to return an error message if the call failed.
+
+    errormsg:  Error message returned to caller
     """
     errormsg: str   # Error message returned to caller
 
@@ -141,28 +162,51 @@ class ErrorResult(BaseModel):
 class ScoutFileStatus(BaseModel):
     """
     Used by the Scout API dummy status endpoint, to return the status of a single file.
+
+    archdone:        All copies complete, file exists on tape (possibly on disk as well)\n
+    path:            First file name for file, for policy decisions, eg "/object.dat.0"\n
+    size:            File size in bytes, eg "10485760"\n
+    inode:           File inode number, eg "2"\n
+    uid:             User ID for file, eg "0"\n
+    username:        User name for file, eg "root"\n
+    gid:             group ID for file, eg "0"\n
+    groupname:       group name for file, eg "root"\n
+    mode:            file mode, eg 33188\n
+    modestring:      file mode string, eg "-rw-r--r--"\n
+    nlink:           number of links to file, eg 1\n
+    atime:           access time, eg "1618411999"\n
+    mtime:           modify time, eg "1618411968"\n
+    ctime:           attribute change time, eg "1618415117"\n
+    rtime:           residence time, eg "1618415102"\n
+    version:         Data version, eg "2560"\n
+    onlineblocks:    Number of online blocks, eg "2560"\n
+    offlineblocks:   Number of offline blocks, eg "0"\n
+    flags:           archive flags, eg "0"\n
+    flagsstring:     archive flags string, eg ""\n
+    uuid:            UUID for file, eg "8e9825f9-291d-415e-bb1f-38d8f865dcac"\n
+    copies:          Complex sub-structure that we'll ignore for this dummy service
     """
     archdone: bool = True     # All copies complete, file exists on tape (possibly on disk as well)
-    path: str                 # First file name for file, for policy decisions, eg "/object.dat.0",
-    size: int = 0             # File size in bytes, eg "10485760",
-    inode: int = 0            # File inode number, eg "2",
-    uid: int = 0              # User ID for file, eg "0",
-    username: str = ""        # User name for file, eg "root",
-    gid: int = 0              # group ID for file, eg "0",
-    groupname: str = ""       # group name for file, eg "root",
-    mode: int = 0             # file mode, eg 33188,
-    modestring: str = ""      # file mode string, eg "-rw-r--r--",
-    nlink: int = 0            # number of links to file, eg 1,
-    atime: int = 0            # access time, eg "1618411999",
-    mtime: int = 0            # modify time, eg "1618411968",
-    ctime: int = 0            # attribute change time, eg "1618415117",
-    rtime: int = 0            # residence time, eg "1618415102",
-    version: str = ""         # Data version, eg "2560",
-    onlineblocks: int = 0     # Number of online blocks, eg "2560",
-    offlineblocks: int = 0    # Number of offline blocks, eg "0",
-    flags: int = 0            # archive flags, eg "0",
-    flagsstring: str = ""     # archive flags string, eg "",
-    uuid: str = ""            # UUID for file, eg "8e9825f9-291d-415e-bb1f-38d8f865dcac",
+    path: str                 # First file name for file, for policy decisions, eg "/object.dat.0"
+    size: int = 0             # File size in bytes, eg "10485760"
+    inode: int = 0            # File inode number, eg "2"
+    uid: int = 0              # User ID for file, eg "0"
+    username: str = ""        # User name for file, eg "root"
+    gid: int = 0              # group ID for file, eg "0"
+    groupname: str = ""       # group name for file, eg "root"
+    mode: int = 0             # file mode, eg 33188
+    modestring: str = ""      # file mode string, eg "-rw-r--r--"
+    nlink: int = 0            # number of links to file, eg 1
+    atime: int = 0            # access time, eg "1618411999"
+    mtime: int = 0            # modify time, eg "1618411968"
+    ctime: int = 0            # attribute change time, eg "1618415117"
+    rtime: int = 0            # residence time, eg "1618415102"
+    version: str = ""         # Data version, eg "2560"
+    onlineblocks: int = 0     # Number of online blocks, eg "2560"
+    offlineblocks: int = 0    # Number of offline blocks, eg "0"
+    flags: int = 0            # archive flags, eg "0"
+    flagsstring: str = ""     # archive flags string, eg ""
+    uuid: str = ""            # UUID for file, eg "8e9825f9-291d-415e-bb1f-38d8f865dcac"
     copies: list = []         # Complex sub-structure that we'll ignore for this dummy service
 
 
@@ -198,18 +242,6 @@ class ScoutAuth(AuthBase):
 # Utility functions
 
 
-def stage_files(job: Job):
-    """
-    Issues a POST request to the SCOUT API to stage the files given in 'job'.
-
-    :param job: An instance of the Job() class
-    :return: None
-    """
-    data = {'path':job.files, 'copy':0, 'inode':[]}
-    result = requests.post(config.SCOUT_STAGE_URL, data=data, auth=ScoutAuth(config.SCOUT_API_TOKEN))
-    return result.status_code == 200
-
-
 ###############################################################################
 # FastAPI endpoint definitions
 #
@@ -217,15 +249,24 @@ def stage_files(job: Job):
 app = FastAPI()
 
 
+def create_job(job: NewJob):
+    """
+    Carries out the actual job of finding out what files are to include in the job, asking Scout to stage those
+    files, and creating the new job record in the database. Runs in the background after the new_job endpoint
+    has returned.
+    """
+
+
 @app.post("/staging/",
           status_code=status.HTTP_201_CREATED,
           responses={403:{'model':ErrorResult}, 500:{'model':ErrorResult}, 502:{'model':ErrorResult}})
-def new_job(job: Job, response:Response):
+async def new_job(job: NewJob, background_tasks: BackgroundTasks, response:Response):
     """
     POST API to create a new staging job. Accepts a JSON dictionary defined above by the Job() class,
     which is processed by FastAPI and passed to this function as an actual instance of the Job() class.
     \f
     :param job: An instance of the Job() class. Job.job_id is the new job ID, Job.files is a list of file names.
+    :param background_tasks: An object to which this function can add tasks to be carried out in the background.
     :param response: An instance of fastapi.Response(), used to set the status code returned
     :return: None
     """
@@ -237,15 +278,34 @@ def new_job(job: Job, response:Response):
                     response.status_code = status.HTTP_403_FORBIDDEN
                     err_msg = "Can't create job %d, because it already exists." % job.job_id
                     return ErrorResult(errormsg=err_msg)
-                curs.execute(CREATE_JOB, (job.job_id,                           # job_id
-                                          datetime.datetime.now(timezone.utc),  # created
-                                          len(job.files)))                      # total_files
-                psycopg2.extras.execute_values(curs, WRITE_FILES, [(job.job_id, f, False) for f in job.files])
 
                 ok = False
                 exc_str = ''
                 try:
-                    ok = stage_files(job)   # Actually stage these files
+                    pathlist = []
+                    if job.files:
+                        pathlist = job.files
+                    elif job.obs_id:
+                        data = {'obs_id':job.obs_id,
+                                'mintime':job.start_time,
+                                'maxtime':job.start_time + job.duration,
+                                'terse':True,
+                                'all_files':False}
+                        result = requests.post(config.DATA_FILES_URL, data=data)
+                        for filename, filedata in result:
+                            pathlist.append(os.path.join(filedata['bucket'], filedata['folder'], filename))
+                    else:
+                        err_msg = "Must specify either obsid, or a list of files"
+                        response.status_code = status.HTTP_400_BAD_REQUEST
+                        print(err_msg)
+                        return ErrorResult(errormsg=err_msg)
+
+                    curs.execute(CREATE_JOB, (job.job_id,  # job_id
+                                              datetime.datetime.now(timezone.utc),  # created
+                                              len(pathlist)))  # total_files
+                    psycopg2.extras.execute_values(curs, WRITE_FILES, [(job.job_id, f, False) for f in job.files])
+
+                    ok = stage_files(pathlist)   # Actually stage these files
                 except Exception:  # Couldn't stage the files
                     exc_str = traceback.format_exc()
                     print(exc_str)
@@ -431,7 +491,9 @@ def get_joblist(response:Response):
           status_code=status.HTTP_200_OK)
 def dummy_scout_stage(path: Optional[list[str]] = Query(None), copy: int = 0, inode: Optional[list[int]] = Query(None)):
     """
-    Emulate Scout's staging server for development. Always returns 200/OK and ignores the file list.
+    Emulate Scout's staging server for development. 'Stages' the files passed in the list of filenames.
+
+    Always returns 200/OK and ignores the file list.
     \f
     :param path: A list of one or more filenames to stage
     :param inode: A list of one or more file inodes to stage
@@ -447,7 +509,10 @@ def dummy_scout_stage(path: Optional[list[str]] = Query(None), copy: int = 0, in
          response_model=ScoutFileStatus)
 def dummy_scout_status(path: str = Query(...)):
     """
-    Emulate Scout's staging server for development. Returns a dummy status for the file specified.
+    Emulate Scout's staging server for development. Returns a status structure for the given (single) file.
+
+    Returns a dummy status for the file specified - if the filename starts with 'offline_', then the status
+    for the file has 1 block still offline, otherwise the status shows the file is online.
     \f
     :param path: Filename to check the status for. If it starts with 'offline_', then the returned status will be offline
     :return: None
@@ -466,7 +531,10 @@ def dummy_scout_status(path: str = Query(...)):
           status_code=status.HTTP_200_OK)
 def dummy_asvo(result: JobResult):
     """
-    Emulate ASVO server for development. Always returns 200/OK.
+    Emulate ASVO server for development. Used to pass a job result back to ASVO, when all files are staged, or when
+    the job times out.
+
+    Always returns 200/OK.
     \f
     :param result: An instance of JobResult
     :return: None
