@@ -2,6 +2,7 @@
 CREATE TABLE IF NOT EXISTS staging_jobs (
     -- One row per staging job
     job_id integer,
+    notify_url text,
     created timestamp with time zone,
     completed boolean,
     total_files integer,

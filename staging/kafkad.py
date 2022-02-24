@@ -70,6 +70,8 @@ class KafkadConfig():
         self.DBPASSWORD = os.getenv('DBPASSWORD')
         self.DBHOST = os.getenv('DBHOST')
         self.DBNAME = os.getenv('DBNAME')
+        self.RESULT_USERNAME = os.getenv('RESULT_USERNAME')
+        self.RESULT_PASSWORD = os.getenv('RESULT_PASSWORD')
 
 
 config = KafkadConfig()

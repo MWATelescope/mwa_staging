@@ -18,7 +18,8 @@ from pydantic import BaseModel
 import requests
 from requests.auth import AuthBase
 
-from mwa_files import NewMWAJob as NewJob
+from mwa_files import MWAObservation as Observation
+from mwa_files import get_mwa_files as get_files
 
 
 class ApiConfig():
@@ -31,7 +32,8 @@ class ApiConfig():
         self.DBNAME = os.getenv('DBNAME')
         self.SCOUT_STAGE_URL = os.getenv('SCOUT_STAGE_URL')
         self.SCOUT_API_TOKEN = os.getenv('SCOUT_API_TOKEN')
-        self.DATA_FILES_URL = os.getenv('DATA_FILES_URL')
+        self.RESULT_USERNAME = os.getenv('RESULT_USERNAME')
+        self.RESULT_PASSWORD = os.getenv('RESULT_PASSWORD')
 
 
 config = ApiConfig()
@@ -42,8 +44,8 @@ DB = psycopg2.connect(user=config.DBUSER,
                       database=config.DBNAME)
 
 CREATE_JOB = """
-INSERT INTO staging_jobs (job_id, created, completed, total_files, notified)
-VALUES (%s, %s, false, %s, false)
+INSERT INTO staging_jobs (job_id, notify_url, created, completed, total_files, notified)
+VALUES (%s, %s, %s, false, %s, false)
 """
 
 DELETE_JOB = """
@@ -82,20 +84,49 @@ FROM files
 WHERE job_id = %s
 """
 
+# Job error codes:
+
+JOB_SUCCESS = 0                # All files staged successfully
+JOB_TIMEOUT = 10               # Timeout waiting for all files to stage - comment field will contain number of staged and outstanding files
+JOB_FILE_LOOKUP_FAILED = 100   # Failed to look up files associated with the given observation (eg failure in metadata/data_files web service call)
+JOB_NO_FILES = 101             # No files to stage
+JOB_SCOUT_CALL_FAILED = 102    # Failure in call to Scout API to stage files
+JOB_CREATION_EXCEPTION = 199   # An exception occurred while creating the job. Comment field will contain exception traceback
+
+
 #####################################################################
 # Pydantic models defining FastAPI parameters or responses
 #
+
+
+class NewJob(BaseModel):
+    """
+    Used by the 'new job' endpoint to pass in the job ID and either a list of files, or a telescope specific structure
+    defining an observation, where all files that are part of that observation should be staged.
+
+    job_id:      Integer staging job ID\n
+    files:       A list of filenames, including full paths\n
+    obs:         Telescope-specific structure defining an observation whose files you want staged\n
+    """
+    job_id: int                     # Integer staging job ID
+    files: Optional[list[str]]      # A list of filenames, including full paths
+    notify_url: str                 # URL to call to notify the client about job failure or success
+    obs: Optional[Observation]      # A telescope-specific structure defining an observation whose files you want staged
 
 
 class JobResult(BaseModel):
     """
     Used by the dummy ASVO server endpoint to pass in the results of a job once all files are staged.
 
-    job_id:  Integer ASVO job ID\n
-    ok:      True if the job succeeded, False if it failed.\n
+    job_id Integer job ID\n
+    ok: Boolean - True means the job has succeeded in staging all files, False means there was an error\n
+    error_code: Integer error code, eg JOB_SUCCESS=0\n
+    comment: Human readable string (eg error message)\n
     """
-    job_id: int   # Integer ASVO job ID
-    ok: bool      # True if the job succeeded, False if it failed.
+    job_id: int      # Integer staging job ID
+    ok: bool         # True if the job succeeded in staging all files, False means there was an error.
+    error_code: int  # Integer error code, eg JOB_SUCCESS=0
+    comment: str     # Human readable string (eg error message)
 
 
 class JobStatus(BaseModel):
@@ -242,11 +273,23 @@ class ScoutAuth(AuthBase):
 # Utility functions
 
 
-###############################################################################
-# FastAPI endpoint definitions
-#
+def send_result(notify_url, job_id, ok, error_code=0, comment=''):
+    """
+    Call the given URL to report the success or failure of a job, passing a JobResult structure containing
+    job_id:int, ok:bool, error_code:int and comment:str
 
-app = FastAPI()
+    :param notify_url: URL to send job result to
+    :param job_id: Integer job ID
+    :param ok: Boolean - True means the job has succeeded in staging all files, False means there was an error
+    :param error_code: Integer error code, eg JOB_SUCCESS=0
+    :param comment: Human readable string (eg error messages)
+    :return:
+    """
+    data = {'job_id':job_id,
+            'ok':ok,
+            'error_code':error_code,
+            'comment':comment}
+    requests.get(notify_url, data=data, auth=(config.RESULT_USERNAME, config.RESULT_PASSWORD))
 
 
 def create_job(job: NewJob):
@@ -254,7 +297,68 @@ def create_job(job: NewJob):
     Carries out the actual job of finding out what files are to include in the job, asking Scout to stage those
     files, and creating the new job record in the database. Runs in the background after the new_job endpoint
     has returned.
+
+    If job.files exists, those files are staged, and job.obs is ignored.
+
+    If job.obs exists, then it is passed to the get_files() function (telescope specific), which is used to look up
+    the list of files to stage.
+
+    Any errors are passed back to the client by calling job.notify_url with an error code and comment
+
+    :param job: An instance of the Job() class. Job.job_id is the new job ID, Job.files is a list of file names.
+    :return: None - runs in the background after the new_job endpoint has already returned.
     """
+    pathlist = []
+    if job.files:
+        pathlist = job.files
+    elif job.obs:
+        pathlist = get_files(job.obs)
+
+    if pathlist is None:
+        send_result(notify_url=job.notify_url,
+                    job_id=job.job_id,
+                    ok=False,
+                    error_code=JOB_FILE_LOOKUP_FAILED,
+                    comment='Failed to get files associated with the given observation.')
+    elif not pathlist:
+        send_result(notify_url=job.notify_url,
+                    job_id=job.job_id,
+                    ok=False,
+                    error_code=JOB_NO_FILES,
+                    comment='No files to stage.')
+    else:
+        try:
+            with DB:
+                data = {'path': pathlist, 'copy': 0, 'inode': []}
+                result = requests.post(config.SCOUT_STAGE_URL, data=data, auth=ScoutAuth(config.SCOUT_API_TOKEN))
+                ok = result.status_code == 200
+
+                if ok:
+                    with DB.cursor() as curs:
+                        curs.execute(CREATE_JOB, (job.job_id,  # job_id
+                                                  job.notify_url,  # URL to call on success/failure
+                                                  datetime.datetime.now(timezone.utc),  # created
+                                                  len(pathlist)))  # total_files
+                        psycopg2.extras.execute_values(curs, WRITE_FILES, [(job.job_id, f, False) for f in job.files])
+                else:
+                    send_result(notify_url=job.notify_url,
+                                job_id=job.job_id,
+                                ok=False,
+                                error_code=JOB_SCOUT_CALL_FAILED,
+                                comment='Failed to contact the Scout API to stage the files.')
+        except:
+            send_result(notify_url=job.notify_url,
+                        job_id=job.job_id,
+                        ok=False,
+                        error_code=JOB_CREATION_EXCEPTION,
+                        comment='Exception during job creation: %s' % traceback.format_exc())
+
+
+###############################################################################
+# FastAPI endpoint definitions
+#
+
+app = FastAPI()
 
 
 @app.post("/staging/",
@@ -264,8 +368,20 @@ async def new_job(job: NewJob, background_tasks: BackgroundTasks, response:Respo
     """
     POST API to create a new staging job. Accepts a JSON dictionary defined above by the Job() class,
     which is processed by FastAPI and passed to this function as an actual instance of the Job() class.
+
+    Most of the work involved is done in the create_job() function, called in the background after this new_job()
+    endpoint returns. Failures in that background task will be returned by calling the notify_url passed with the new
+    job details.
+
+    This endpoint will return:
+        403 if the job ID already exists
+        400 if neither a file list or an observation structure is given
+        500 if there is an exception
+
+    Any errors in the background job creation process will be returned by calling job.notify_url
     \f
     :param job: An instance of the Job() class. Job.job_id is the new job ID, Job.files is a list of file names.
+                job.obs is a telescope-specific structure defining an observation.
     :param background_tasks: An object to which this function can add tasks to be carried out in the background.
     :param response: An instance of fastapi.Response(), used to set the status code returned
     :return: None
@@ -279,46 +395,15 @@ async def new_job(job: NewJob, background_tasks: BackgroundTasks, response:Respo
                     err_msg = "Can't create job %d, because it already exists." % job.job_id
                     return ErrorResult(errormsg=err_msg)
 
-                ok = False
-                exc_str = ''
-                try:
-                    pathlist = []
-                    if job.files:
-                        pathlist = job.files
-                    elif job.obs_id:
-                        data = {'obs_id':job.obs_id,
-                                'mintime':job.start_time,
-                                'maxtime':job.start_time + job.duration,
-                                'terse':True,
-                                'all_files':False}
-                        result = requests.post(config.DATA_FILES_URL, data=data)
-                        for filename, filedata in result:
-                            pathlist.append(os.path.join(filedata['bucket'], filedata['folder'], filename))
-                    else:
-                        err_msg = "Must specify either obsid, or a list of files"
-                        response.status_code = status.HTTP_400_BAD_REQUEST
-                        print(err_msg)
-                        return ErrorResult(errormsg=err_msg)
+        if (not job.files) or (not job.obs):
+            err_msg = "Must specify either an observation, or a list of files"
+            response.status_code = status.HTTP_400_BAD_REQUEST
+            print(err_msg)
+            return ErrorResult(errormsg=err_msg)
 
-                    curs.execute(CREATE_JOB, (job.job_id,  # job_id
-                                              datetime.datetime.now(timezone.utc),  # created
-                                              len(pathlist)))  # total_files
-                    psycopg2.extras.execute_values(curs, WRITE_FILES, [(job.job_id, f, False) for f in job.files])
-
-                    ok = stage_files(pathlist)   # Actually stage these files
-                except Exception:  # Couldn't stage the files
-                    exc_str = traceback.format_exc()
-                    print(exc_str)
-
-                if not ok:
-                    err_msg = 'Error contacting Scout to stage files for job %d, job not created: %s' % (job.job_id, exc_str)
-                    DB.rollback()    # Reverse the job and file creation in the database
-                    response.status_code = status.HTTP_502_BAD_GATEWAY
-                    print(err_msg)
-                    return ErrorResult(errormsg=err_msg)
-                else:
-                    print('New job %d created with these files: %s' % (job.job_id, job.files))
+        background_tasks.add_task(create_job, job=job)
         return
+
     except Exception:  # Any other errors
         response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
         exc_str = traceback.format_exc()
