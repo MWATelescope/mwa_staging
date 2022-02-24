@@ -11,6 +11,14 @@ To test with manually generated Kafka messages, eg:
 >>> p = KafkaProducer(bootstrap_servers=['localhost:9092'], value_serializer=lambda v: json.dumps(v).encode('utf-8'))
 >>> p.send('mwa', {'filename':'gibber'})
 >>> p.send('mwa', {'filename':'foo'})
+
+From Harrison:
+I’ve setup rclone as the ubuntu user and added the test vm as a remote called test. Just type rclone and it gives you the help menu for how to use it, it’s got a really nice CLI
+
+Examples:
+rclone ls test: - list all buckets and files
+rclone mkdir test:12345 - create a bucket called 12345 in the test remote
+rclone copy test.txt test:12345 - copy test.txt to the bucket created above
 """
 
 import os
@@ -33,7 +41,8 @@ EXPIRY_TIME = 86400    # Return an error if it's been more than a day since a jo
 
 # All jobs that haven't been notified as finished, that have at least one 'ready' file
 COMPLETION_QUERY = """
-SELECT files.job_id, count(*), staging_jobs.total_files, staging_jobs.completed, staging_jobs.checked
+SELECT files.job_id, count(*), staging_jobs.total_files, staging_jobs.completed, staging_jobs.checked,
+       staging_jobs.notify_url
 FROM files JOIN staging_jobs USING(job_id)
 WHERE ready AND (not staging_jobs.notified) 
 GROUP BY (files.job_id, staging_jobs.total_files, staging_jobs.completed, staging_jobs.checked)
@@ -61,15 +70,19 @@ class KafkadConfig():
     """Config class, used to load configuration data from environment variables.
     """
     def __init__(self):
-        self.MWA_TOPIC = os.getenv('MWA_TOPIC') # Kafka topic to listen on
+        self.MWA_TOPIC = os.getenv('MWA_TOPIC')  # Kafka topic to listen on
         self.KAFKA_SERVER = os.getenv('KAFKA_SERVER')
-        self.ASVO_URL = os.getenv('ASVO_URL')
+
+        self.SCOUT_LOGIN_URL = os.getenv('SCOUT_LOGIN_URL')
+        self.SCOUT_API_USER = os.getenv('SCOUT_API_USER')
+        self.SCOUT_API_PASSWORD = os.getenv('SCOUT_API_PASSWORD')
         self.SCOUT_QUERY_URL = os.getenv('SCOUT_QUERY_URL')
-        self.SCOUT_API_TOKEN = os.getenv('SCOUT_API_TOKEN')
+
         self.DBUSER = os.getenv('DBUSER')
         self.DBPASSWORD = os.getenv('DBPASSWORD')
         self.DBHOST = os.getenv('DBHOST')
         self.DBNAME = os.getenv('DBNAME')
+
         self.RESULT_USERNAME = os.getenv('RESULT_USERNAME')
         self.RESULT_PASSWORD = os.getenv('RESULT_PASSWORD')
 
@@ -78,6 +91,17 @@ config = KafkadConfig()
 
 # When the most recent valid Kafka file status message was processed
 LAST_KAFKA_MESSAGE = None
+
+SCOUT_API_TOKEN = ''
+
+# Job error codes:
+
+JOB_SUCCESS = 0                # All files staged successfully
+JOB_TIMEOUT = 10               # Timeout waiting for all files to stage - comment field will contain number of staged and outstanding files
+JOB_FILE_LOOKUP_FAILED = 100   # Failed to look up files associated with the given observation (eg failure in metadata/data_files web service call)
+JOB_NO_FILES = 101             # No files to stage
+JOB_SCOUT_CALL_FAILED = 102    # Failure in call to Scout API to stage files
+JOB_CREATION_EXCEPTION = 199   # An exception occurred while creating the job. Comment field will contain exception traceback
 
 
 class ScoutAuth(AuthBase):
@@ -101,6 +125,44 @@ class ScoutAuth(AuthBase):
         """
         r.headers['Authorization'] = 'Bearer %s' % self.token
         return r
+
+
+def get_scout_token():
+    """
+    Pass the Scout username/password to the SCOUT_LOGIN_URL, and return a token to use for
+    subsequent queries.
+    :return: token string
+    """
+    global SCOUT_API_TOKEN
+    if SCOUT_API_TOKEN:
+        return SCOUT_API_TOKEN
+    else:
+        data = {'acct':config.SCOUT_API_USER,
+                'pass':config.SCOUT_API_PASSWORD}
+        result = requests.post(config.SCOUT_LOGIN_URL, json=data)
+        if result.status_code == 200:
+            SCOUT_API_TOKEN = result.json()['response']
+            return SCOUT_API_TOKEN
+
+
+def send_result(notify_url, job_id, ok, error_code=0, comment=''):
+    """
+    Call the given URL to report the success or failure of a job, passing a JobResult structure containing
+    job_id:int, ok:bool, error_code:int and comment:str
+
+    :param notify_url: URL to send job result to
+    :param job_id: Integer job ID
+    :param ok: Boolean - True means the job has succeeded in staging all files, False means there was an error
+    :param error_code: Integer error code, eg JOB_SUCCESS=0
+    :param comment: Human readable string (eg error messages)
+    :return:
+    """
+    data = {'job_id':job_id,
+            'ok':ok,
+            'error_code':error_code,
+            'comment':comment}
+    result = requests.post(notify_url, json=data, auth=(config.RESULT_USERNAME, config.RESULT_PASSWORD))
+    return result.status_code == 200
 
 
 def process_message(msg, db):
@@ -138,31 +200,10 @@ def is_file_ready(filename):
     :param filename: File name to query
     :return bool: True if the file is staged and ready.
     """
-    result = requests.get(config.SCOUT_QUERY_URL, params={'path':filename}, auth=ScoutAuth(config.SCOUT_API_TOKEN))
+    result = requests.get(config.SCOUT_QUERY_URL, params={'path':filename}, auth=ScoutAuth(get_scout_token()))
     resdict = result.json()
     print('Got status for file %s: %s' % (filename, resdict))
     return resdict['offlineblocks'] == 0
-
-
-def send_notification(job_id, timeout=False):
-    """
-    If notify is False (the default),this function sends ASVO a POST request saying that the given job ID has
-    had all its files staged succesfully.
-
-    If timeout is True, notify ASVO that the job has failed.
-
-    :param job_id: Integer Job ID
-    :param timeout: boolean, True if the job has failed (exceeded timeout)
-    :return: True if the request succeeded, False otherwise
-    """
-    post_data = {'job_id':job_id}
-    if timeout:
-        post_data['ok'] = False
-    else:
-        post_data['ok'] = True
-
-    result = requests.post(config.ASVO_URL, data=json.dumps(post_data))
-    return result.status_code == 200
 
 
 def check_job_for_existing_files(job_id, db):
@@ -275,7 +316,11 @@ def MonitorJobs(consumer):
                             completed = True
                     # If it's complete, and it's been more than 10 minutes since we last tried notifing ASVO:
                     if completed and ((time.time() - notify_attempts.get(job_id, 0)) > RETRY_INTERVAL):
-                        ok = send_notification(job_id)
+                        ok = send_result(notify_url,
+                                         job_id,
+                                         ok=True,
+                                         error_code=JOB_SUCCESS,
+                                         comment="All %d files staged." % total_files)
                         print("job %d, OK=%s" % (job_id, ok))
                         if ok:
                             curs.execute('UPDATE staging_jobs SET notified=true WHERE job_id=%s', (job_id,))
@@ -297,11 +342,17 @@ def MonitorJobs(consumer):
 
                 print('Check to see if any completed files need ASVO notified again')
                 # Loop over all uncompleted jobs, to see if any have timed-out and need ASVO notified about the error
-                curs.execute("SELECT job_id, created FROM staging_jobs WHERE NOT completed")
+                curs.execute("SELECT job_id, created, notify_url FROM staging_jobs WHERE NOT completed")
                 rows = curs.fetchall()
-                for job_id, created in rows:
+                for job_id, created, notify_url in rows:
                     if (datetime.datetime.now(timezone.utc) - created).seconds > EXPIRY_TIME:
-                        ok = send_notification(job_id, timeout=True)
+                        ok = send_result(notify_url,
+                                         job_id,
+                                         ok=False,
+                                         error_code=JOB_TIMEOUT,
+                                         comment="Timed out with staging all files." )
+                        # TODO - add another query to look up total and staged file numbers from the files
+                        # table, so we can include that info in the comment
                         print("OK=%s" % ok)
                         if ok:
                             curs.execute('UPDATE staging_jobs SET notified=true WHERE job_id=%s', (job_id,))

@@ -30,14 +30,19 @@ class ApiConfig():
         self.DBPASSWORD = os.getenv('DBPASSWORD')
         self.DBHOST = os.getenv('DBHOST')
         self.DBNAME = os.getenv('DBNAME')
+
         self.SCOUT_STAGE_URL = os.getenv('SCOUT_STAGE_URL')
-        self.SCOUT_API_TOKEN = os.getenv('SCOUT_API_TOKEN')
+        self.SCOUT_LOGIN_URL = os.getenv('SCOUT_LOGIN_URL')
+        self.SCOUT_API_USER = os.getenv('SCOUT_API_USER')
+        self.SCOUT_API_PASSWORD = os.getenv('SCOUT_API_PASSWORD')
+
         self.RESULT_USERNAME = os.getenv('RESULT_USERNAME')
         self.RESULT_PASSWORD = os.getenv('RESULT_PASSWORD')
 
 
 config = ApiConfig()
 
+SCOUT_API_TOKEN = ''
 DB = psycopg2.connect(user=config.DBUSER,
                       password=config.DBPASSWORD,
                       host=config.DBHOST,
@@ -273,6 +278,24 @@ class ScoutAuth(AuthBase):
 # Utility functions
 
 
+def get_scout_token():
+    """
+    Pass the Scout username/password to the SCOUT_LOGIN_URL, and return a token to use for
+    subsequent queries.
+    :return: token string
+    """
+    global SCOUT_API_TOKEN
+    if SCOUT_API_TOKEN:
+        return SCOUT_API_TOKEN
+    else:
+        data = {'acct':config.SCOUT_API_USER,
+                'pass':config.SCOUT_API_PASSWORD}
+        result = requests.post(config.SCOUT_LOGIN_URL, json=data)
+        if result.status_code == 200:
+            SCOUT_API_TOKEN = result.json()['response']
+            return SCOUT_API_TOKEN
+
+
 def send_result(notify_url, job_id, ok, error_code=0, comment=''):
     """
     Call the given URL to report the success or failure of a job, passing a JobResult structure containing
@@ -289,7 +312,8 @@ def send_result(notify_url, job_id, ok, error_code=0, comment=''):
             'ok':ok,
             'error_code':error_code,
             'comment':comment}
-    requests.get(notify_url, data=data, auth=(config.RESULT_USERNAME, config.RESULT_PASSWORD))
+    result = requests.post(notify_url, json=data, auth=(config.RESULT_USERNAME, config.RESULT_PASSWORD))
+    return result.status_code == 200
 
 
 def create_job(job: NewJob):
@@ -303,9 +327,13 @@ def create_job(job: NewJob):
     If job.obs exists, then it is passed to the get_files() function (telescope specific), which is used to look up
     the list of files to stage.
 
-    Any errors are passed back to the client by calling job.notify_url with an error code and comment
+    Any errors are passed back to the client by calling job.notify_url with an error code and comment - one of:
+        JOB_FILE_LOOKUP_FAILED
+        JOB_NO_FILES
+        JOB_SCOUT_CALL_FAILED
+        JOB_CREATION_EXCEPTION
 
-    :param job: An instance of the Job() class. Job.job_id is the new job ID, Job.files is a list of file names.
+    :param job: An instance of the NewJob() class.
     :return: None - runs in the background after the new_job endpoint has already returned.
     """
     pathlist = []
@@ -330,7 +358,7 @@ def create_job(job: NewJob):
         try:
             with DB:
                 data = {'path': pathlist, 'copy': 0, 'inode': []}
-                result = requests.post(config.SCOUT_STAGE_URL, data=data, auth=ScoutAuth(config.SCOUT_API_TOKEN))
+                result = requests.post(config.SCOUT_STAGE_URL, data=data, auth=ScoutAuth(get_scout_token()))
                 ok = result.status_code == 200
 
                 if ok:
@@ -585,7 +613,6 @@ def dummy_scout_stage(path: Optional[list[str]] = Query(None), copy: int = 0, in
     :param copy: Integer - if 0, system will pick copy, otherwise use specified copy only
     :return: None
     """
-
     print("Pretending be Scout: Staging: %s" % (path,))
 
 
