@@ -139,7 +139,7 @@ class StageFiles(BaseModel):
     Used by the dummy ASVO server endpoint to pretend to stage jobs.
     """
     path: Optional[list[str]] = Query(None)
-    copy: int = 0
+    copyint: int = Query(0, alias='copy')
     inode: Optional[list[int]] = Query(None)
 
 
