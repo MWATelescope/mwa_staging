@@ -55,7 +55,7 @@ def get_mwa_files(obs: MWAObservation):
         return None
 
     pathlist = []
-    for filename, filedata in result:
+    for filename, filedata in result.items():
         pathlist.append(os.path.join(filedata['bucket'], filedata['folder'], filename))
 
     return pathlist
