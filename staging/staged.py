@@ -376,7 +376,7 @@ def create_job(job: NewJob):
                                                   job.notify_url,  # URL to call on success/failure
                                                   datetime.datetime.now(timezone.utc),  # created
                                                   len(pathlist)))  # total_files
-                        psycopg2.extras.execute_values(curs, WRITE_FILES, [(job.job_id, f, False, False) for f in job.files])
+                        psycopg2.extras.execute_values(curs, WRITE_FILES, [(job.job_id, f, False, False) for f in pathlist])
                 else:
                     send_result(notify_url=job.notify_url,
                                 job_id=job.job_id,
