@@ -358,7 +358,7 @@ def create_job(job: NewJob):
         try:
             with DB:
                 data = {'path': pathlist, 'copy': 0, 'inode': []}
-                result = requests.post(config.SCOUT_STAGE_URL, data=data, auth=ScoutAuth(get_scout_token()))
+                result = requests.post(config.SCOUT_STAGE_URL, json=data, auth=ScoutAuth(get_scout_token()))
                 ok = result.status_code == 200
 
                 if ok:

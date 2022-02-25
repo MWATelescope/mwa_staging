@@ -49,7 +49,7 @@ def get_mwa_files(obs: MWAObservation):
             'maxtime': maxtime,
             'terse': True,
             'all_files': False}
-    result = requests.post(DATA_FILES_URL, data=data)
+    result = requests.get(DATA_FILES_URL, data=data)
 
     if result.status_code != 200:
         return None
