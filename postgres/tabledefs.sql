@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS files (
     job_id integer,
     filename text,
     ready boolean,
+    error boolean,
     readytime timestamp with time zone,
 
     PRIMARY KEY (job_id, filename)

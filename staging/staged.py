@@ -59,7 +59,7 @@ WHERE job_id = %s
 """
 
 WRITE_FILES = """
-INSERT INTO files (job_id, filename, ready)
+INSERT INTO files (job_id, filename, ready, error)
 VALUES %s
 """
 
@@ -84,7 +84,7 @@ ORDER BY sj.job_id;
 """
 
 QUERY_FILES = """
-SELECT filename, ready, extract(epoch from readytime)
+SELECT filename, ready, error, extract(epoch from readytime)
 FROM files
 WHERE job_id = %s
 """
@@ -142,18 +142,18 @@ class JobStatus(BaseModel):
     created:      Integer unix timestamp when the job was created\n
     completed:    True if all files have been staged\n
     total_files:  Total number of files in this job\n
-    files:        Specifying the tuple type as tuple(bool, int) crashes the FastAPI doc generator\n
+    files:        key is filename, value is tuple(bool, bool, int), which contains (ready, error, readytime)\n
 
     The files attribute is a list of (ready:bool, readytime:int) tuples where ready_time is the time when that file
     was staged (or None)
     """
-    job_id: int       # Integer ASVO job ID
+    job_id: int       # Integer staging job ID
     created: Optional[int] = None      # Integer unix timestamp when the job was created
     completed: Optional[bool] = None   # True if all files have been staged
     total_files: Optional[int] = None  # Total number of files in this job
-    # The files attribute is a list of (ready:bool, readytime:int) tuples where ready_time
-    # is the time when that file was staged (or None)
-    files: dict[str, tuple] = {"":(False, 0)}     # Specifying the tuple type as tuple(bool, int) crashes the FastAPI doc generator
+    # The files attribute is a list of (ready:bool, error:bool, readytime:int) tuples where ready_time
+    # is the time when that file was staged or returned an error (or None if neither has happened yet)
+    files: dict[str, tuple] = {"":(False, False, int)}     # Specifying the tuple type as tuple(bool, int) crashes the FastAPI doc generator
 
 
 class GlobalStatistics(BaseModel):
@@ -367,7 +367,7 @@ def create_job(job: NewJob):
                                                   job.notify_url,  # URL to call on success/failure
                                                   datetime.datetime.now(timezone.utc),  # created
                                                   len(pathlist)))  # total_files
-                        psycopg2.extras.execute_values(curs, WRITE_FILES, [(job.job_id, f, False) for f in job.files])
+                        psycopg2.extras.execute_values(curs, WRITE_FILES, [(job.job_id, f, False, False) for f in job.files])
                 else:
                     send_result(notify_url=job.notify_url,
                                 job_id=job.job_id,
@@ -468,10 +468,10 @@ def read_status(job_id: int, response:Response):
                 files = {}
                 curs.execute(QUERY_FILES, (job_id,))
                 for row in curs:
-                    filename, ready, readytime = row
+                    filename, ready, error, readytime = row
                     if readytime is not None:
                         readytime = int(readytime)
-                    files[filename] = (ready, readytime)
+                    files[filename] = (ready, error, readytime)
                 result = JobStatus(job_id=job_id,
                                    created=int(created),
                                    completed=completed,

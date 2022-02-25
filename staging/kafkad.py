@@ -19,6 +19,14 @@ Examples:
 rclone ls test: - list all buckets and files
 rclone mkdir test:12345 - create a bucket called 12345 in the test remote
 rclone copy test.txt test:12345 - copy test.txt to the bucket created above
+
+and
+
+Sample Kafka messages:
+{"Inode":45871,"Filename":"nfs/file1","RequestTime":"2022-02-04 03:01:38 +0000 GMT","CompleteTime":"2022-02-04 03:02:32 +0000 GMT","Error":""}
+{"Inode":45871,"Filename":"nfs/file1","RequestTime":"2022-02-04 03:00:38 +0000 GMT","CompleteTime":"2022-02-04 03:00:53 +0000 GMT","Error":"unable to stage file, no valid copies"}
+
+An empty error string indicates no error on the stage.
 """
 
 import os
@@ -170,27 +178,51 @@ def process_message(msg, db):
     Handle a single message from Kafka, when a new file has been staged. Here msg.value has already
     been de-serialised, so it's a Python dictionary, with contents TBD.
 
-    For development, msg.value['filename'] is assumed to contain the path+filename of the file that has
-    just been staged. TODO - fix this when we know what Kafka messages will actually contain.
+    For development, msg.value['Filename'] will contain the path+filename of the file that has
+    just been staged, and msg.value['Error'] will be an empty string if the file was staged with
+    no errors, or an error message if the file could not be staged. For example:
+
+    {"Inode":45871,
+     "Filename":"nfs/file1",
+     "RequestTime":"2022-02-04 03:01:38 +0000 GMT",
+     "CompleteTime":"2022-02-04 03:02:32 +0000 GMT",
+     "Error":""}
+
+    or
+
+    {"Inode":45871,
+     "Filename":"nfs/file1",
+     "RequestTime":"2022-02-04 03:00:38 +0000 GMT",
+     "CompleteTime":"2022-02-04 03:00:53 +0000 GMT",
+     "Error":"unable to stage file, no valid copies"}
 
     :param msg: Named Tuple from Kafka, with attributes 'topic', 'partition', 'offset', 'key' and 'value'
     :param db: Database connection object
     :return: Number of rows updated in the files table
     """
     global LAST_KAFKA_MESSAGE
-    filename = msg.value.get('filename', None)
+    filename = msg.value.get('Filename', None)
+    errors = msg.value.get('Error', '')
     if filename is None:
         print("Invalid message, no 'filename' key: %s" % msg.value)
         return '', 0
 
     LAST_KAFKA_MESSAGE = datetime.datetime.utcnow()
 
-    # If a file (in another job) was already 'ready', don't change the readytime value
-    query = "UPDATE files SET ready=true, readytime=now() WHERE filename=%s and not ready"
-    with db:
-        with db.cursor() as curs:
-            curs.execute(query, (filename,))
-            return filename, curs.rowcount
+    if not errors:
+        # If a file (in another job) was already 'ready', don't change the readytime value
+        query = "UPDATE files SET ready=true, readytime=now() WHERE filename=%s and not ready"
+        with db:
+            with db.cursor() as curs:
+                curs.execute(query, (filename,))
+                return filename, curs.rowcount
+    else:
+        # If a file (in another job) was already 'ready', don't change the readytime value
+        query = "UPDATE files SET error=true, readytime=now() WHERE filename=%s and not ready"
+        with db:
+            with db.cursor() as curs:
+                curs.execute(query, (filename,))
+                return filename, curs.rowcount
 
 
 def is_file_ready(filename):
@@ -314,7 +346,7 @@ def MonitorJobs(consumer):
                             print('    job %d marked as complete.' % job_id)
                             curs.execute('UPDATE staging_jobs SET completed=true WHERE job_id=%s', (job_id,))
                             completed = True
-                    # If it's complete, and it's been more than 10 minutes since we last tried notifing ASVO:
+                    # If it's complete, and it's been more than 10 minutes since we last tried notifying the client:
                     if completed and ((time.time() - notify_attempts.get(job_id, 0)) > RETRY_INTERVAL):
                         ok = send_result(notify_url,
                                          job_id,
@@ -341,7 +373,7 @@ def MonitorJobs(consumer):
                 mondb.commit()
 
                 print('Check to see if any completed files need ASVO notified again')
-                # Loop over all uncompleted jobs, to see if any have timed-out and need ASVO notified about the error
+                # Loop over all uncompleted jobs, to see if any have timed-out and the client should be notified about the error
                 curs.execute("SELECT job_id, created, notify_url FROM staging_jobs WHERE NOT completed")
                 rows = curs.fetchall()
                 for job_id, created, notify_url in rows:
@@ -361,6 +393,8 @@ def MonitorJobs(consumer):
                         else:
                             notify_attempts[job_id] = time.time()
                 mondb.commit()
+
+                # TODO - add check to see if any jobs have files that are all either ready, or error, so none are waiting.
 
                 print('Check to see if the Kafka daemon is still talking to us')
                 try:
