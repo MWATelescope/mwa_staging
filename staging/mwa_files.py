@@ -38,9 +38,15 @@ def get_mwa_files(obs: MWAObservation):
     :param obs: Defines an MWA observation
     :return: A list of file names
     """
+    if obs.start_time and obs.duration:
+        mintime = obs.start_time
+        maxtime = obs.start_time + obs.duration
+    else:
+        mintime = 0
+        maxtime = 0
     data = {'obs_id': obs.obs_id,
-            'mintime': obs.start_time,
-            'maxtime': obs.start_time + obs.duration,
+            'mintime': mintime,
+            'maxtime': maxtime,
             'terse': True,
             'all_files': False}
     result = requests.post(DATA_FILES_URL, data=data)
