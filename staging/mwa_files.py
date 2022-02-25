@@ -42,8 +42,8 @@ def get_mwa_files(obs: MWAObservation):
         mintime = obs.start_time
         maxtime = obs.start_time + obs.duration
     else:
-        mintime = 0
-        maxtime = 0
+        mintime = None
+        maxtime = None
     data = {'obs_id': obs.obs_id,
             'mintime': mintime,
             'maxtime': maxtime,
