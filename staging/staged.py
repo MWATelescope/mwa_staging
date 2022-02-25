@@ -153,7 +153,7 @@ class JobStatus(BaseModel):
     total_files: Optional[int] = None  # Total number of files in this job
     # The files attribute is a list of (ready:bool, error:bool, readytime:int) tuples where ready_time
     # is the time when that file was staged or returned an error (or None if neither has happened yet)
-    files: dict[str, tuple] = {"":(False, False, int)}     # Specifying the tuple type as tuple(bool, int) crashes the FastAPI doc generator
+    files: dict[str, tuple] = {"":(False, False, 0)}     # Specifying the tuple type as tuple(bool, int) crashes the FastAPI doc generator
 
 
 class GlobalStatistics(BaseModel):
@@ -423,7 +423,7 @@ async def new_job(job: NewJob, background_tasks: BackgroundTasks, response:Respo
                     err_msg = "Can't create job %d, because it already exists." % job.job_id
                     return ErrorResult(errormsg=err_msg)
 
-        if (not job.files) or (not job.obs):
+        if (not job.files) and (not job.obs):
             err_msg = "Must specify either an observation, or a list of files"
             response.status_code = status.HTTP_400_BAD_REQUEST
             print(err_msg)
