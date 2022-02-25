@@ -134,6 +134,15 @@ class JobResult(BaseModel):
     comment: str     # Human readable string (eg error message)
 
 
+class StageFiles(BaseModel):
+    """
+    Used by the dummy ASVO server endpoint to pretend to stage jobs.
+    """
+    path: Optional[list[str]] = Query(None)
+    copy: int = 0
+    inode: Optional[list[int]] = Query(None)
+
+
 class JobStatus(BaseModel):
     """
     Used by the 'read status' endpoint to return the status of a single job.
@@ -602,18 +611,16 @@ def get_joblist(response:Response):
 
 @app.post("/v1/request/batchstage",
           status_code=status.HTTP_200_OK)
-def dummy_scout_stage(path: Optional[list[str]] = Query(None), copy: int = 0, inode: Optional[list[int]] = Query(None)):
+def dummy_scout_stage(stagedata: StageFiles):
     """
     Emulate Scout's staging server for development. 'Stages' the files passed in the list of filenames.
 
     Always returns 200/OK and ignores the file list.
     \f
-    :param path: A list of one or more filenames to stage
-    :param inode: A list of one or more file inodes to stage
-    :param copy: Integer - if 0, system will pick copy, otherwise use specified copy only
+    :param stagedata: An instance of StageFiles containing the file list to stage
     :return: None
     """
-    print("Pretending be Scout: Staging: %s" % (path,))
+    print("Pretending be Scout: Staging: %s" % (stagedata.path,))
 
 
 @app.get("/v1/file",
