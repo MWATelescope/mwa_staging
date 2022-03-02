@@ -52,8 +52,9 @@ COMPLETION_QUERY = """
 SELECT files.job_id, count(*), staging_jobs.total_files, staging_jobs.completed, staging_jobs.checked,
        staging_jobs.notify_url
 FROM files JOIN staging_jobs USING(job_id)
-WHERE ready AND (not staging_jobs.notified) 
-GROUP BY (files.job_id, staging_jobs.total_files, staging_jobs.completed, staging_jobs.checked)
+WHERE (ready or error) AND (not staging_jobs.notified) 
+GROUP BY (files.job_id, staging_jobs.total_files, staging_jobs.completed, staging_jobs.checked,
+       staging_jobs.notify_url)
 """
 
 # Most recent 'readytime' for this given filename, that is NOT from the given job ID.
@@ -102,9 +103,10 @@ LAST_KAFKA_MESSAGE = None
 
 SCOUT_API_TOKEN = ''
 
-# Job error codes:
+# Job return codes:
 
 JOB_SUCCESS = 0                # All files staged successfully
+JOB_FILE_ERRORS = 5            # All files either ready, or had errors from Kafka
 JOB_TIMEOUT = 10               # Timeout waiting for all files to stage - comment field will contain number of staged and outstanding files
 JOB_FILE_LOOKUP_FAILED = 100   # Failed to look up files associated with the given observation (eg failure in metadata/data_files web service call)
 JOB_NO_FILES = 101             # No files to stage
@@ -153,21 +155,30 @@ def get_scout_token():
             return SCOUT_API_TOKEN
 
 
-def send_result(notify_url, job_id, ok, error_code=0, comment=''):
+def send_result(notify_url,
+                job_id,
+                return_code=0,
+                total_files=0,
+                ready_files=0,
+                error_files=0,
+                comment=''):
     """
-    Call the given URL to report the success or failure of a job, passing a JobResult structure containing
-    job_id:int, ok:bool, error_code:int and comment:str
+    Call the given URL to report the success or failure of a job, passing a JobResult structure
 
     :param notify_url: URL to send job result to
     :param job_id: Integer job ID
-    :param ok: Boolean - True means the job has succeeded in staging all files, False means there was an error
-    :param error_code: Integer error code, eg JOB_SUCCESS=0
+    :param return_code: Integer return code, eg JOB_SUCCESS=0
+    :param total_files: Total number of files in job
+    :param ready_files: Number of files successfully staged
+    :param error_files: Number of files where Kafka returned an error
     :param comment: Human readable string (eg error messages)
     :return:
     """
     data = {'job_id':job_id,
-            'ok':ok,
-            'error_code':error_code,
+            'return_code':return_code,
+            'total_files':total_files,
+            'ready_files':ready_files,
+            'error_files':error_files,
             'comment':comment}
     result = requests.post(notify_url, json=data, auth=(config.RESULT_USERNAME, config.RESULT_PASSWORD))
     return result.status_code == 200
@@ -316,6 +327,49 @@ def HandleMessages(consumer):
             consumer.commit()   # Tell the Kafka server we've processed that message, so we don't see it again.
 
 
+def notify_job(db, job_id):
+    """
+
+    :param db:
+    :param job_id:
+    :return:
+    """
+    with db:
+        with db.cursor() as curs:
+            curs.execute('SELECT count(*) from files where job_id=%s and ready', (job_id,))
+            ready_files = curs.fetchall()[0][0]
+
+            curs.execute('SELECT count(*) from files where job_id=%s and error', (job_id,))
+            error_files = curs.fetchall()[0][0]
+
+            curs.execute('SELECT total_files, notify_url from staging_jobs where job_id=%s', (job_id,))
+            total_files, notify_url = curs.fetchall()[0]
+
+    if total_files == ready_files:
+        return_code = JOB_SUCCESS
+        comment = 'All %d files staged successfully' % total_files
+    elif total_files == (ready_files + error_files):
+        return_code = JOB_FILE_ERRORS
+        comment = 'Out of %d files in total, %d were staged successfully, but %d files had errors' % (total_files,
+                                                                                                      ready_files,
+                                                                                                      error_files)
+    else:
+        return_code = JOB_TIMEOUT
+        comment = 'Job timed out after %d seconds. Out of %d files in total, %d staged successfully, and %d files had errors' % (EXPIRY_TIME,
+                                                                                                                                 total_files,
+                                                                                                                                 ready_files,
+                                                                                                                                 error_files)
+
+    ok = send_result(notify_url,
+                     job_id,
+                     return_code=return_code,
+                     total_files=total_files,
+                     ready_files=ready_files,
+                     error_files=error_files,
+                     comment=comment)
+    return ok   # True if the call to notify ASVO was successful
+
+
 def MonitorJobs(consumer):
     """
     Runs continously, keeping track of job progress, and notifying ASVO as jobs are completed, or
@@ -336,30 +390,30 @@ def MonitorJobs(consumer):
                 rows = curs.fetchall()
 
                 print('Checking to see if jobs are complete')
-                # Loop over all jobs that haven't been notified as finished, that have at least one 'ready' file
+                # Loop over all jobs that haven't been notified as finished, that have at least one 'ready' or 'error' file
                 for job_id, num_files, total_files, completed, checked in rows:
                     print('Check completion on job %d' % job_id)
-                    # If we now have all the files, mark it as complete
-                    if (num_files == total_files):
-                        print('    job %d has %d out of %d files' % (job_id, num_files, total_files))
-                        if (not completed):
+                    if completed:   # Already marked as complete, but ASVO hasn't been successfully notified:
+                        if ((time.time() - notify_attempts.get(job_id, 0)) > RETRY_INTERVAL):
+                            ok = notify_job(db=mondb, job_id=job_id)
+                            if ok:
+                                curs.execute('UPDATE staging_jobs SET notified=true WHERE job_id=%s', (job_id,))
+                                if job_id in notify_attempts:
+                                    del notify_attempts[job_id]
+                            else:
+                                notify_attempts[job_id] = time.time()
+                    else:
+                        if (num_files == total_files):  # If all the files are either 'ready' or 'error', mark it as complete
                             print('    job %d marked as complete.' % job_id)
                             curs.execute('UPDATE staging_jobs SET completed=true WHERE job_id=%s', (job_id,))
-                            completed = True
-                    # If it's complete, and it's been more than 10 minutes since we last tried notifying the client:
-                    if completed and ((time.time() - notify_attempts.get(job_id, 0)) > RETRY_INTERVAL):
-                        ok = send_result(notify_url,
-                                         job_id,
-                                         ok=True,
-                                         error_code=JOB_SUCCESS,
-                                         comment="All %d files staged." % total_files)
-                        print("job %d, OK=%s" % (job_id, ok))
-                        if ok:
-                            curs.execute('UPDATE staging_jobs SET notified=true WHERE job_id=%s', (job_id,))
-                            if job_id in notify_attempts:
-                                del notify_attempts[job_id]
-                        else:
-                            notify_attempts[job_id] = time.time()
+                            if ((time.time() - notify_attempts.get(job_id, 0)) > RETRY_INTERVAL):
+                                ok = notify_job(db=mondb, job_id=job_id)
+                                if ok:
+                                    curs.execute('UPDATE staging_jobs SET notified=true WHERE job_id=%s', (job_id,))
+                                    if job_id in notify_attempts:
+                                        del notify_attempts[job_id]
+                                else:
+                                    notify_attempts[job_id] = time.time()
 
                 print('Looking to see if any jobs need to be checked for already-staged files')
                 curs.execute('SELECT job_id FROM staging_jobs WHERE not notified AND not checked')
@@ -372,20 +426,13 @@ def MonitorJobs(consumer):
 
                 mondb.commit()
 
-                print('Check to see if any completed files need ASVO notified again')
+                print('Check to see if any jobs have timed out while waiting for completion')
                 # Loop over all uncompleted jobs, to see if any have timed-out and the client should be notified about the error
                 curs.execute("SELECT job_id, created, notify_url FROM staging_jobs WHERE NOT completed")
                 rows = curs.fetchall()
                 for job_id, created, notify_url in rows:
                     if (datetime.datetime.now(timezone.utc) - created).seconds > EXPIRY_TIME:
-                        ok = send_result(notify_url,
-                                         job_id,
-                                         ok=False,
-                                         error_code=JOB_TIMEOUT,
-                                         comment="Timed out with staging all files." )
-                        # TODO - add another query to look up total and staged file numbers from the files
-                        # table, so we can include that info in the comment
-                        print("OK=%s" % ok)
+                        ok = notify_job(db=mondb, job_id=job_id)
                         if ok:
                             curs.execute('UPDATE staging_jobs SET notified=true WHERE job_id=%s', (job_id,))
                             if job_id in notify_attempts:
@@ -393,6 +440,7 @@ def MonitorJobs(consumer):
                         else:
                             notify_attempts[job_id] = time.time()
                 mondb.commit()
+                # TODO - flag job as 'notified' if we've timed out
 
                 # TODO - add check to see if any jobs have files that are all either ready, or error, so none are waiting.
 

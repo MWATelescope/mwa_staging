@@ -69,7 +69,7 @@ WHERE job_id = %s
 """
 
 QUERY_JOB = """
-SELECT extract(epoch from created), completed, total_files
+SELECT extract(epoch from created), completed, notified, total_files
 FROM staging_jobs
 WHERE job_id = %s
 """
@@ -89,7 +89,7 @@ FROM files
 WHERE job_id = %s
 """
 
-# Job error codes:
+# Job return codes:
 
 JOB_SUCCESS = 0                # All files staged successfully
 JOB_TIMEOUT = 10               # Timeout waiting for all files to stage - comment field will contain number of staged and outstanding files
@@ -124,13 +124,17 @@ class JobResult(BaseModel):
     Used by the dummy ASVO server endpoint to pass in the results of a job once all files are staged.
 
     job_id Integer job ID\n
-    ok: Boolean - True means the job has succeeded in staging all files, False means there was an error\n
-    error_code: Integer error code, eg JOB_SUCCESS=0\n
+    return_code: Integer error code, eg JOB_SUCCESS=0\n
+    total_files: Total number of files in job\n
+    ready_files: Number of files successfully staged\n
+    error_files: Number of files where Kafka returned an error\n
     comment: Human readable string (eg error message)\n
     """
     job_id: int      # Integer staging job ID
-    ok: bool         # True if the job succeeded in staging all files, False means there was an error.
-    error_code: int  # Integer error code, eg JOB_SUCCESS=0
+    return_code: int  # Integer error code, eg JOB_SUCCESS=0
+    total_files: int   # Total number of files in job
+    ready_files: int   # Number of files successfully staged
+    error_files: int   # Number of files where Kafka returned an error
     comment: str     # Human readable string (eg error message)
 
 
@@ -151,6 +155,8 @@ class JobStatus(BaseModel):
     created:      Integer unix timestamp when the job was created\n
     completed:    True if all files have been staged\n
     total_files:  Total number of files in this job\n
+    ready_files: Number of files successfully staged\n
+    error_files: Number of files where Kafka returned an error\n
     files:        key is filename, value is tuple(bool, bool, int), which contains (ready, error, readytime)\n
 
     The files attribute is a list of (ready:bool, readytime:int) tuples where ready_time is the time when that file
@@ -160,6 +166,8 @@ class JobStatus(BaseModel):
     created: Optional[int] = None      # Integer unix timestamp when the job was created
     completed: Optional[bool] = None   # True if all files have been staged
     total_files: Optional[int] = None  # Total number of files in this job
+    ready_files: Optional[int] = None   # Number of files successfully staged
+    error_files: Optional[int] = None   # Number of files where Kafka returned an error
     # The files attribute is a list of (ready:bool, error:bool, readytime:int) tuples where ready_time
     # is the time when that file was staged or returned an error (or None if neither has happened yet)
     files: dict[str, tuple] = {"":(False, False, 0)}     # Specifying the tuple type as tuple(bool, int) crashes the FastAPI doc generator
@@ -182,8 +190,9 @@ class GlobalStatistics(BaseModel):
     last_message: Optional[float]     # Timestamp when the last valid file status message was received
     completed_jobs: int = 0           # Total number of jobs with all files staged
     incomplete_jobs: int = 0          # Number of jobs waiting for files to be staged
-    ready_files: int = 0              # Total number of files staged so far
-    unready_files: int = 0            # Number of files we are waiting to be staged
+    ready_files: int = 0              # Total number of files staged successfully so far
+    error_files: int = 0              # Number of files for which Kafka reported an error
+    waiting_files: int = 0            # Number of files we have still waiting to be staged
 
 
 class JobList(BaseModel):
@@ -305,21 +314,30 @@ def get_scout_token():
             return SCOUT_API_TOKEN
 
 
-def send_result(notify_url, job_id, ok, error_code=0, comment=''):
+def send_result(notify_url,
+                job_id,
+                return_code=0,
+                total_files=0,
+                ready_files=0,
+                error_files=0,
+                comment=''):
     """
-    Call the given URL to report the success or failure of a job, passing a JobResult structure containing
-    job_id:int, ok:bool, error_code:int and comment:str
+    Call the given URL to report the success or failure of a job, passing a JobResult structure
 
     :param notify_url: URL to send job result to
     :param job_id: Integer job ID
-    :param ok: Boolean - True means the job has succeeded in staging all files, False means there was an error
-    :param error_code: Integer error code, eg JOB_SUCCESS=0
+    :param return_code: Integer return code, eg JOB_SUCCESS=0
+    :param total_files: Total number of files in job
+    :param ready_files: Number of files successfully staged
+    :param error_files: Number of files where Kafka returned an error
     :param comment: Human readable string (eg error messages)
     :return:
     """
     data = {'job_id':job_id,
-            'ok':ok,
-            'error_code':error_code,
+            'return_code':return_code,
+            'total_files':total_files,
+            'ready_files':ready_files,
+            'error_files':error_files,
             'comment':comment}
     result = requests.post(notify_url, json=data, auth=(config.RESULT_USERNAME, config.RESULT_PASSWORD))
     return result.status_code == 200
@@ -354,14 +372,12 @@ def create_job(job: NewJob):
     if pathlist is None:
         send_result(notify_url=job.notify_url,
                     job_id=job.job_id,
-                    ok=False,
-                    error_code=JOB_FILE_LOOKUP_FAILED,
+                    return_code=JOB_FILE_LOOKUP_FAILED,
                     comment='Failed to get files associated with the given observation.')
     elif not pathlist:
         send_result(notify_url=job.notify_url,
                     job_id=job.job_id,
-                    ok=False,
-                    error_code=JOB_NO_FILES,
+                    return_code=JOB_NO_FILES,
                     comment='No files to stage.')
     else:
         try:
@@ -380,14 +396,12 @@ def create_job(job: NewJob):
                 else:
                     send_result(notify_url=job.notify_url,
                                 job_id=job.job_id,
-                                ok=False,
-                                error_code=JOB_SCOUT_CALL_FAILED,
+                                return_code=JOB_SCOUT_CALL_FAILED,
                                 comment='Failed to contact the Scout API to stage the files.')
         except:
             send_result(notify_url=job.notify_url,
                         job_id=job.job_id,
-                        ok=False,
-                        error_code=JOB_CREATION_EXCEPTION,
+                        return_code=JOB_CREATION_EXCEPTION,
                         comment='Exception during job creation: %s' % traceback.format_exc())
 
 
@@ -451,15 +465,16 @@ async def new_job(job: NewJob, background_tasks: BackgroundTasks, response:Respo
 @app.get("/staging/",
          status_code=status.HTTP_200_OK,
          responses={200:{'model':JobStatus}, 404:{'model':ErrorResult}, 500:{'model':ErrorResult}})
-def read_status(job_id: int, response:Response):
+def read_status(job_id: int, response:Response, include_files: bool = False):
     """
     GET API to read status details about an existing staging job. Accepts a single parameter in the
     URL (job_id, an integer), and looks up that job's data. The job status is returned as a
     JSON dict as defined by the JobStatus class.
     \f
-    :param job_id:    # Integer ASVO job ID
-    :param response:  # An instance of fastapi.Response(), used to set the status code returned
-    :return:          # JSON dict as defined by the JobStatus() class above
+    :param job_id:          Integer ASVO job ID
+    :param include_files:   True if the complete list of files should be included in the result
+    :param response:        An instance of fastapi.Response(), used to set the status code returned
+    :return:                JSON dict as defined by the JobStatus() class above
     """
     try:
         with DB:
@@ -472,19 +487,30 @@ def read_status(job_id: int, response:Response):
                 if len(rows) > 1:   # Multiple rows for the same Job ID
                     response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
                     return ErrorResult(errormsg='Job %d has multiple rows!' % job_id)
-                created, completed, total_files = rows[0]
+                created, completed, notified, total_files = rows[0]
+
+                curs.execute('SELECT count(*) from files where job_id=%s and ready', (job_id,))
+                ready_files = curs.fetchall()[0][0]
+
+                curs.execute('SELECT count(*) from files where job_id=%s and error', (job_id,))
+                error_files = curs.fetchall()[0][0]
 
                 files = {}
-                curs.execute(QUERY_FILES, (job_id,))
-                for row in curs:
-                    filename, ready, error, readytime = row
-                    if readytime is not None:
-                        readytime = int(readytime)
-                    files[filename] = (ready, error, readytime)
+                if include_files:
+                    curs.execute(QUERY_FILES, (job_id,))
+                    for row in curs:
+                        filename, ready, error, readytime = row
+                        if readytime is not None:
+                            readytime = int(readytime)
+                        files[filename] = (ready, error, readytime)
+
                 result = JobStatus(job_id=job_id,
                                    created=int(created),
                                    completed=completed,
-                                   total_files=len(files),
+                                   notified=notified,
+                                   total_files=total_files,
+                                   ready_files=ready_files,
+                                   error_files=error_files,
                                    files=files)
                 print("Job %d STATUS: %s" % (job_id, result))
                 return result
@@ -555,8 +581,10 @@ def get_stats(response:Response):
                 incomplete_jobs = curs.fetchall()[0][0]
                 curs.execute("SELECT count(*) FROM files WHERE ready")
                 ready_files = curs.fetchall()[0][0]
-                curs.execute("SELECT count(*) FROM files WHERE not ready")
-                unready_files = curs.fetchall()[0][0]
+                curs.execute("SELECT count(*) FROM files WHERE error")
+                error_files = curs.fetchall()[0][0]
+                curs.execute("SELECT count(*) FROM files WHERE not ready and not error")
+                waiting_files = curs.fetchall()[0][0]
 
         if kafkad_heartbeat is not None:
             hb = kafkad_heartbeat.timestamp()
@@ -573,7 +601,8 @@ def get_stats(response:Response):
                                   completed_jobs=completed_jobs,
                                   incomplete_jobs=incomplete_jobs,
                                   ready_files=ready_files,
-                                  unready_files=unready_files)
+                                  error_files=error_files,
+                                  waiting_files=waiting_files)
         return result
     except Exception:
         response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
