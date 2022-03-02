@@ -44,11 +44,12 @@ def get_mwa_files(obs: MWAObservation):
     else:
         mintime = None
         maxtime = None
-    data = {'obs_id': obs.obs_id,
-            'mintime': mintime,
-            'maxtime': maxtime,
-            'terse': True,
-            'all_files': False}
+    data = {'obs_id': obs.obs_id,   # Return files associated with this obs_id
+            'location': 2,          # Must be on tape (Banksia)
+            'mintime': mintime,     # For VCS observations, only return files for at or after this time
+            'maxtime': maxtime,     # For VCS observations, only return files for before this time.
+            'terse': True,          # Only return bucket, folder, and filename
+            'all_files': False}     # Ignore files that have been archived, and have not been deleted
     result = requests.get(DATA_FILES_URL, data=data)
 
     if result.status_code != 200:
