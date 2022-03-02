@@ -440,9 +440,6 @@ def MonitorJobs(consumer):
                         else:
                             notify_attempts[job_id] = time.time()
                 mondb.commit()
-                # TODO - flag job as 'notified' if we've timed out
-
-                # TODO - add check to see if any jobs have files that are all either ready, or error, so none are waiting.
 
                 print('Check to see if the Kafka daemon is still talking to us')
                 try:
