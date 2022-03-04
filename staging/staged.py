@@ -113,10 +113,10 @@ class NewJob(BaseModel):
     files:       A list of filenames, including full paths\n
     obs:         Telescope-specific structure defining an observation whose files you want staged\n
     """
-    job_id: int                     # Integer staging job ID
-    files: Optional[list[str]]      # A list of filenames, including full paths
-    notify_url: str                 # URL to call to notify the client about job failure or success
-    obs: Optional[Observation]      # A telescope-specific structure defining an observation whose files you want staged
+    job_id: int                       # Integer staging job ID
+    files: Optional[list[str]] = []   # A list of filenames, including full paths
+    notify_url: str                   # URL to call to notify the client about job failure or success
+    obs: Optional[Observation] = {}   # A telescope-specific structure defining an observation whose files you want staged
 
 
 class JobResult(BaseModel):
@@ -467,12 +467,13 @@ async def new_job(job: NewJob, background_tasks: BackgroundTasks, response:Respo
          responses={200:{'model':JobStatus}, 404:{'model':ErrorResult}, 500:{'model':ErrorResult}})
 def read_status(job_id: int, response:Response, include_files: bool = False):
     """
-    GET API to read status details about an existing staging job. Accepts a single parameter in the
-    URL (job_id, an integer), and looks up that job's data. The job status is returned as a
-    JSON dict as defined by the JobStatus class.
+    GET API to read status details about an existing staging job. Accepts job_id and (optional) include_files
+    as parameters in the URL, and looks up that job's data. The job status is returned as a
+    JSON dict as defined by the JobStatus class. If you pass True in the 'include_files' parameter, then
+    a complete list of all files in the job will be returned in the status structure.
     \f
     :param job_id:          Integer ASVO job ID
-    :param include_files:   True if the complete list of files should be included in the result
+    :param include_files:   Pass True if the complete list of files should be included in the result
     :param response:        An instance of fastapi.Response(), used to set the status code returned
     :return:                JSON dict as defined by the JobStatus() class above
     """
