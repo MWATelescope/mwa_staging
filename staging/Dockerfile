@@ -1,4 +1,4 @@
-FROM python:3.8
+FROM python:3.9.10
 
 WORKDIR '/usr/src/app'
 
@@ -8,10 +8,9 @@ RUN apt-get update && \
 RUN pip install pipenv
 
 COPY ./Pipfile .
-COPY ./Pipfile.lock .
 
-RUN pipenv install --deploy --ignore-pipfile
+RUN pipenv install
 
 COPY . .
 
-CMD ["pipenv", "run", "uvicorn", "staged:app", "--host", "0.0.0.0"]
+CMD ["pipenv", "run", "uvicorn", "staged:app", "--reload", "--host", "0.0.0.0"]
