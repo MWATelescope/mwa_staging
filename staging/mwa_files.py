@@ -52,19 +52,20 @@ def get_mwa_files(obs: MWAObservation):
             'all_files': False}     # Ignore files that have been archived, and have not been deleted
     result = requests.get(DATA_FILES_URL, data=data)
 
-    if result.status_code != 200:
+    if result.status_code == 200:
+        pathlist = []
+        for filename, filedata in result.json().items():
+            bucket = filedata['bucket']
+            folder = filedata['folder']
+            if bucket is None:
+                bucket = ''
+            if folder is None:
+                folder = ''
+            if filename is None:
+                continue
+            pathlist.append(os.path.join(bucket, folder, filename))
+        return pathlist
+    elif result.status_code == 404:
+        return []
+    else:
         return None
-
-    pathlist = []
-    for filename, filedata in result.json().items():
-        bucket = filedata['bucket']
-        folder = filedata['folder']
-        if bucket is None:
-            bucket = ''
-        if folder is None:
-            folder = ''
-        if filename is None:
-            continue
-        pathlist.append(os.path.join(bucket, folder, filename))
-
-    return pathlist
