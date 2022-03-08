@@ -32,6 +32,7 @@ An empty error string indicates no error on the stage.
 import os
 import json
 import datetime
+from datetime import timezone
 import threading
 import time
 import traceback
@@ -39,7 +40,12 @@ import psycopg2
 import requests
 from requests.auth import AuthBase
 
-from datetime import timezone
+
+import logging
+
+logging.basicConfig()
+LOGGER = logging.getLogger('staged')
+
 from kafka import errors, KafkaConsumer
 
 
@@ -182,8 +188,20 @@ def send_result(notify_url,
             'ready_files':ready_files,
             'error_files':error_files,
             'comment':comment}
-    result = requests.post(notify_url, json=data, auth=(config.RESULT_USERNAME, config.RESULT_PASSWORD))
-    return result.status_code == 200
+    try:
+        LOGGER.debug(notify_url, (config.RESULT_USERNAME, config.RESULT_PASSWORD))
+        result = requests.post(notify_url, json=data, auth=(config.RESULT_USERNAME, config.RESULT_PASSWORD), verify=False)
+    except requests.Timeout:
+        LOGGER.error('Timout calling notify_url: %s' % notify_url)
+        return None
+    except requests.RequestException:
+        LOGGER.error('Exception calling notify_url %s: %s' % (notify_url, traceback.format_exc()))
+        return
+
+    if result.status_code != 200:
+        LOGGER.error('Error %d returned when calling notify_url: %s' % (result.status_code, result.text))
+    else:
+        return True
 
 
 def process_message(msg, db):
@@ -216,22 +234,22 @@ def process_message(msg, db):
     global LAST_KAFKA_MESSAGE
     filename = msg.value.get('Filename', None)
     errors = msg.value.get('Error', '')
-    if filename is None:
-        print("Invalid message, no 'filename' key: %s" % msg.value)
+    if not filename:
+        LOGGER.error("Invalid message, no 'Filename': %s" % msg.value)
         return '', 0
 
     LAST_KAFKA_MESSAGE = datetime.datetime.utcnow()
 
     if not errors:
         # If a file (in another job) was already 'ready', don't change the readytime value
-        query = "UPDATE files SET ready=true, readytime=now() WHERE filename=%s and not ready"
+        query = "UPDATE files SET ready=true, error=false, readytime=now() WHERE filename=%s and not ready"
         with db:
             with db.cursor() as curs:
                 curs.execute(query, (filename,))
                 return filename, curs.rowcount
     else:
-        # If a file (in another job) was already 'ready', don't change the readytime value
-        query = "UPDATE files SET error=true, readytime=now() WHERE filename=%s and not ready"
+        # If a file (in another job) was already 'error', don't change the readytime value
+        query = "UPDATE files SET error=true, ready=false, readytime=now() WHERE filename=%s and not error"
         with db:
             with db.cursor() as curs:
                 curs.execute(query, (filename,))
@@ -249,7 +267,7 @@ def is_file_ready(filename):
     if result.status_code == 401:
         result = requests.get(config.SCOUT_QUERY_URL, params={'path': filename}, auth=ScoutAuth(get_scout_token(refresh=False)))
     resdict = result.json()
-    print('Got status for file %s: %s' % (filename, resdict))
+    LOGGER.debug('Got status for file %s: %s' % (filename, resdict))
     return resdict['offlineblocks'] == 0
 
 
@@ -270,15 +288,15 @@ def check_job_for_existing_files(job_id, db):
         file_dict = {}   # Dict with filename as key, and readytime as value
         for row in rows:
             filename = row[0]
-            print('    File %s from job %d:' % (filename, job_id))
+            LOGGER.debug('    File %s from job %d:' % (filename, job_id))
             # Find the most recently 'ready' file with the same name but from a different job
             curs.execute(ALREADY_DONE_QUERY, (filename, job_id))
             result = curs.fetchall()
             if result:
-                print('        Found already done at %s' % result[0][0])
+                LOGGER.debug('        Found already done at %s' % result[0][0])
                 file_dict[filename] = result[0][0]
             else:
-                print('        Not found previously.')
+                LOGGER.debug('        Not found previously.')
 
         if file_dict:
             earliest_good = datetime.datetime(year=9999, month=12, day=31, tzinfo=timezone.utc)
@@ -288,22 +306,22 @@ def check_job_for_existing_files(job_id, db):
                 return   # The most recently ready file is still in the cache, so none of the older ones will be
 
             for filename in check_files:
-                print('    Previous file %s:' % filename)
+                LOGGER.debug('    Previous file %s:' % filename)
                 readytime = file_dict[filename]
                 if file_dict[filename] >= earliest_good:   # This file was ready more recently than one we know is still cached
-                    print('        More recent than %s, so marked as ready' % earliest_good)
+                    LOGGER.debug('        More recent than %s, so marked as ready' % earliest_good)
                     # Update all not-ready records for this file to say that it's still cached, with the old readytime
                     curs.execute('UPDATE files SET ready = true, readytime = %s WHERE filename=%s and not ready',
                                  (readytime, filename))
                 else:   # This file is older than one we know is still cached
                     if is_file_ready(filename=filename):   # If it is still cached
-                        print('        Is still ready.')
+                        LOGGER.debug('        Is still ready.')
                         # Update all not-ready records for this file to say that it's still cached, with the old readytime
                         curs.execute('UPDATE files SET ready=true, readytime = %s WHERE filename=%s and not ready',
                                      (readytime, filename))
                         earliest_good = file_dict[filename]
                     else:
-                        print('        Is not still ready.')
+                        LOGGER.debug('        Is not still ready.')
 
 
 def HandleMessages(consumer):
@@ -321,11 +339,11 @@ def HandleMessages(consumer):
         try:
             filename, rowcount = process_message(msg, msgdb)
             if rowcount:
-                print('File %s staged, updated %d rows in files table' % (filename, rowcount))
+                LOGGER.debug('File %s staged, updated %d rows in files table' % (filename, rowcount))
             else:
-                print('Unknown file: %s' % filename)
+                LOGGER.error('Unknown file: %s' % filename)
         except:
-            print(traceback.format_exc())
+            LOGGER.error(traceback.format_exc())
             return
         finally:
             consumer.commit()   # Tell the Kafka server we've processed that message, so we don't see it again.
@@ -393,10 +411,10 @@ def MonitorJobs(consumer):
                 curs.execute(COMPLETION_QUERY)
                 rows = curs.fetchall()
 
-                print('Checking to see if jobs are complete')
+                LOGGER.info('Checking to see if jobs are complete')
                 # Loop over all jobs that haven't been notified as finished, that have at least one 'ready' or 'error' file
                 for job_id, num_files, total_files, completed, checked in rows:
-                    print('Check completion on job %d' % job_id)
+                    LOGGER.info('Check completion on job %d' % job_id)
                     if completed:   # Already marked as complete, but ASVO hasn't been successfully notified:
                         if ((time.time() - notify_attempts.get(job_id, 0)) > RETRY_INTERVAL):
                             ok = notify_job(db=mondb, job_id=job_id)
@@ -408,7 +426,7 @@ def MonitorJobs(consumer):
                                 notify_attempts[job_id] = time.time()
                     else:
                         if (num_files == total_files):  # If all the files are either 'ready' or 'error', mark it as complete
-                            print('    job %d marked as complete.' % job_id)
+                            LOGGER.info('    job %d marked as complete.' % job_id)
                             curs.execute('UPDATE staging_jobs SET completed=true WHERE job_id=%s', (job_id,))
                             if ((time.time() - notify_attempts.get(job_id, 0)) > RETRY_INTERVAL):
                                 ok = notify_job(db=mondb, job_id=job_id)
@@ -419,18 +437,18 @@ def MonitorJobs(consumer):
                                 else:
                                     notify_attempts[job_id] = time.time()
 
-                print('Looking to see if any jobs need to be checked for already-staged files')
+                LOGGER.info('Looking to see if any jobs need to be checked for already-staged files')
                 curs.execute('SELECT job_id FROM staging_jobs WHERE not notified AND not checked')
                 rows = curs.fetchall()
                 for row in rows:
                     job_id = row[0]
-                    print('Check for already staged files on job %d' % job_id)
+                    LOGGER.info('Check for already staged files on job %d' % job_id)
                     check_job_for_existing_files(job_id=job_id, db=mondb)
                     curs.execute('UPDATE staging_jobs SET checked=true WHERE job_id=%s', (job_id,))
 
                 mondb.commit()
 
-                print('Check to see if any jobs have timed out while waiting for completion')
+                LOGGER.info('Check to see if any jobs have timed out while waiting for completion')
                 # Loop over all uncompleted jobs, to see if any have timed-out and the client should be notified about the error
                 curs.execute("SELECT job_id, created, notify_url FROM staging_jobs WHERE NOT completed")
                 rows = curs.fetchall()
@@ -445,19 +463,19 @@ def MonitorJobs(consumer):
                             notify_attempts[job_id] = time.time()
                 mondb.commit()
 
-                print('Check to see if the Kafka daemon is still talking to us')
+                LOGGER.info('Check to see if the Kafka daemon is still talking to us')
                 try:
                     consumer.topics()   # Make sure the remote end responds
                     connection_alive = True
                 except errors.KafkaError:
                     connection_alive = False
-                print('Updating heartbeat table')
+                LOGGER.info('Updating heartbeat table')
                 curs.execute(UPDATE_HEARTBEAT_QUERY, (connection_alive, LAST_KAFKA_MESSAGE))
                 mondb.commit()
 
                 # TODO - add a query to check for and delete the job (and files) for old (already notified) jobs
 
-                print('Sleeping')
+                LOGGER.info('Sleeping')
                 time.sleep(CHECK_INTERVAL)  # Check job status at regular intervals
 
 
