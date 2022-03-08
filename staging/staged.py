@@ -11,12 +11,18 @@ import os
 from typing import Optional
 
 import traceback
-from fastapi import FastAPI, BackgroundTasks, Query, Response, status
+from fastapi import FastAPI, BackgroundTasks, Query, Request, Response, status
 import psycopg2
 from psycopg2 import extras
 from pydantic import BaseModel
 import requests
 from requests.auth import AuthBase
+
+import logging
+
+logging.basicConfig()
+
+LOGGER = logging.getLogger('staged')
 
 from mwa_files import MWAObservation as Observation
 from mwa_files import get_mwa_files as get_files
@@ -97,6 +103,8 @@ JOB_FILE_LOOKUP_FAILED = 100   # Failed to look up files associated with the giv
 JOB_NO_FILES = 101             # No files to stage
 JOB_SCOUT_CALL_FAILED = 102    # Failure in call to Scout API to stage files
 JOB_CREATION_EXCEPTION = 199   # An exception occurred while creating the job. Comment field will contain exception traceback
+
+DUMMY_TOKEN = "This is a real token, honest!"    # Used by the dummy Scout API endpoints
 
 
 #####################################################################
@@ -264,10 +272,24 @@ class ScoutFileStatus(BaseModel):
     copies: list = []         # Complex sub-structure that we'll ignore for this dummy service
 
 
+class ScoutLogin(BaseModel):
+    """
+    Used by the dummy Scout API login endpoint, to pass username/password
+    """
+    acct: str      # Account name
+    passwd: str = Query('', alias='pass')     # Account password
+
+
+class ScoutLoginResponse(BaseModel):
+    """
+    Used by the dummy Scout API login endoint to return the token
+    """
+    response: str    # Token string
+
+
 ###########################################################################
 # Class to handle Scout authorisation by adding the token to the headers
 #
-
 
 class ScoutAuth(AuthBase):
     """Attaches the 'Authorization: Bearer $TOKEN' header to the request, for authenticating Scout API
@@ -296,14 +318,16 @@ class ScoutAuth(AuthBase):
 # Utility functions
 
 
-def get_scout_token():
+def get_scout_token(refresh: bool = False):
     """
     Pass the Scout username/password to the SCOUT_LOGIN_URL, and return a token to use for
     subsequent queries.
+
+    :param refresh: boolean, if True, the cached value of the token won't be used.
     :return: token string
     """
     global SCOUT_API_TOKEN
-    if SCOUT_API_TOKEN:
+    if SCOUT_API_TOKEN and (not refresh):
         return SCOUT_API_TOKEN
     else:
         data = {'acct':config.SCOUT_API_USER,
@@ -339,8 +363,20 @@ def send_result(notify_url,
             'ready_files':ready_files,
             'error_files':error_files,
             'comment':comment}
-    result = requests.post(notify_url, json=data, auth=(config.RESULT_USERNAME, config.RESULT_PASSWORD))
-    return result.status_code == 200
+    try:
+        LOGGER.debug(notify_url, (config.RESULT_USERNAME, config.RESULT_PASSWORD))
+        result = requests.post(notify_url, json=data, auth=(config.RESULT_USERNAME, config.RESULT_PASSWORD), verify=False)
+    except requests.Timeout:
+        LOGGER.error('Timout calling notify_url: %s' % notify_url)
+        return None
+    except requests.RequestException:
+        LOGGER.error('Exception calling notify_url %s: %s' % (notify_url, traceback.format_exc()))
+        return
+
+    if result.status_code != 200:
+        LOGGER.error('Error %d returned when calling notify_url: %s' % (result.status_code, result.text))
+    else:
+        return True
 
 
 def create_job(job: NewJob):
@@ -384,6 +420,8 @@ def create_job(job: NewJob):
             with DB:
                 data = {'path': pathlist, 'copy': 0, 'inode': []}
                 result = requests.post(config.SCOUT_STAGE_URL, json=data, auth=ScoutAuth(get_scout_token()))
+                if result.status_code == 401:
+                    result = requests.post(config.SCOUT_STAGE_URL, json=data, auth=ScoutAuth(get_scout_token(refresh=True)))
                 ok = result.status_code == 200
 
                 if ok:
@@ -449,7 +487,7 @@ async def new_job(job: NewJob, background_tasks: BackgroundTasks, response:Respo
         if (not job.files) and (not job.obs):
             err_msg = "Must specify either an observation, or a list of files"
             response.status_code = status.HTTP_400_BAD_REQUEST
-            print(err_msg)
+            LOGGER.error(err_msg)
             return ErrorResult(errormsg=err_msg)
 
         background_tasks.add_task(create_job, job=job)
@@ -458,7 +496,7 @@ async def new_job(job: NewJob, background_tasks: BackgroundTasks, response:Respo
     except Exception:  # Any other errors
         response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
         exc_str = traceback.format_exc()
-        print(exc_str)
+        LOGGER.error(exc_str)
         return ErrorResult(errormsg='Exception creating staging job %d: %s' % (job.job_id, exc_str))
 
 
@@ -513,12 +551,12 @@ def read_status(job_id: int, response:Response, include_files: bool = False):
                                    ready_files=ready_files,
                                    error_files=error_files,
                                    files=files)
-                print("Job %d STATUS: %s" % (job_id, result))
+                LOGGER.info("Job %d STATUS: %s" % (job_id, result))
                 return result
     except Exception:
         response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
         exc_str = traceback.format_exc()
-        print(exc_str)
+        LOGGER.error(exc_str)
         return ErrorResult(errormsg='Exception staging job %d: %s' % (job_id, exc_str))
 
 
@@ -541,12 +579,12 @@ def delete_job(job_id: int, response:Response):
                     response.status_code = status.HTTP_404_NOT_FOUND
                     return ErrorResult(errormsg='Job %d not found' % job_id)
                 curs.execute(DELETE_FILES, (job_id,))
-                print('Job %d DELETED.' % job_id)
+                LOGGER.info('Job %d DELETED.' % job_id)
         return
     except Exception:  # Any other errors
         response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
         exc_str = traceback.format_exc()
-        print(exc_str)
+        LOGGER.error(exc_str)
         return ErrorResult(errormsg='Exception staging job %d: %s' % (job_id, exc_str))
 
 
@@ -569,6 +607,7 @@ def get_stats(response:Response):
     GET API to return an overall job and file statistics for this process (the staging web server)
     and the Kafka daemon (kafkad.py)
     \f
+    :param response:        An instance of fastapi.Response(), used to set the status code returned
     :return: GlobalStatus object
     """
     try:
@@ -608,7 +647,7 @@ def get_stats(response:Response):
     except Exception:
         response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
         exc_str = traceback.format_exc()
-        print(exc_str)
+        LOGGER.error(exc_str)
         return ErrorResult(errormsg='Exception getting status: %s' % (exc_str,))
 
 
@@ -620,6 +659,7 @@ def get_joblist(response:Response):
     GET API to return a list of all jobs, giving the number of staged files, the total number of files, and the
     completed status flag for each job.
     \f
+    :param response:        An instance of fastapi.Response(), used to set the status code returned
     :return: JobList object
     """
     try:
@@ -635,28 +675,52 @@ def get_joblist(response:Response):
     except Exception:
         response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
         exc_str = traceback.format_exc()
-        print(exc_str)
+        LOGGER.error(exc_str)
         return ErrorResult(errormsg='Exception getting status: %s' % (exc_str,))
+
+
+@app.post("/v1/security/login",
+          status_code=status.HTTP_200_OK,
+          response_model=ScoutLoginResponse)
+def dummy_scout_login(account: ScoutLogin, response:Response):
+    """
+    Emulate Scout API for development. Takes an account name and password, returns a token string.
+    :param account: ScoutLogin (keys are 'acct' and 'pass')
+    :param response:        An instance of fastapi.Response(), used to set the status code returned
+    :return: Token string in a dict, with key 'response'
+    """
+    if (account.acct == config.SCOUT_API_USER) and (account.passwd == config.SCOUT_API_PASSWORD):
+        return ScoutLoginResponse(response=DUMMY_TOKEN)
+    else:
+        LOGGER.error('Bad username/password.')
+        response.status_code = 401
+        return
 
 
 @app.post("/v1/request/batchstage",
           status_code=status.HTTP_200_OK)
-def dummy_scout_stage(stagedata: StageFiles):
+def dummy_scout_stage(stagedata: StageFiles, request:Request, response:Response):
     """
     Emulate Scout's staging server for development. 'Stages' the files passed in the list of filenames.
 
     Always returns 200/OK and ignores the file list.
     \f
     :param stagedata: An instance of StageFiles containing the file list to stage
+    :param request: FastAPI request object, so we can check for the right token
+    :param response:        An instance of fastapi.Response(), used to set the status code returned
     :return: None
     """
-    print("Pretending be Scout: Staging: %s" % (stagedata.path,))
+    if request.headers['Authorization'] == 'Bearer %s' % DUMMY_TOKEN:
+        LOGGER.info("Pretending be Scout: Staging: %s" % (stagedata.path,))
+    else:
+        LOGGER.error("Pretending to be Scout - bad Authorization header: %s" % request.headers['Authorization'])
+        response.status_code = 401
 
 
 @app.get("/v1/file",
          status_code=status.HTTP_200_OK,
          response_model=ScoutFileStatus)
-def dummy_scout_status(path: str = Query(...)):
+def dummy_scout_status(request:Request, response:Response, path: str = Query(...)):
     """
     Emulate Scout's staging server for development. Returns a status structure for the given (single) file.
 
@@ -664,16 +728,22 @@ def dummy_scout_status(path: str = Query(...)):
     for the file has 1 block still offline, otherwise the status shows the file is online.
     \f
     :param path: Filename to check the status for. If it starts with 'offline_', then the returned status will be offline
+    :param request: FastAPI request object, so we can check for the right token
+    :param response:        An instance of fastapi.Response(), used to set the status code returned
     :return: None
     """
-    resp = ScoutFileStatus(path=path)
-    resp.onlineblocks = 22
-    if path.startswith('offline_'):
-        resp.offlineblocks = 1
+    if request.headers['Authorization'] == 'Bearer %s' % DUMMY_TOKEN:
+        resp = ScoutFileStatus(path=path)
+        resp.onlineblocks = 22
+        if path.startswith('offline_'):
+            resp.offlineblocks = 1
+        else:
+            resp.offlineblocks = 0
+        LOGGER.info("Pretending be Scout: Returning status for %s" % (path,))
+        return resp
     else:
-        resp.offlineblocks = 0
-    print("Pretending be Scout: Returning status for %s" % (path,))
-    return resp
+        LOGGER.error("Pretending to be Scout - bad Authorization header: %s" % request.headers['Authorization'])
+        response.status_code = 401
 
 
 @app.post("/jobresult",
@@ -688,4 +758,6 @@ def dummy_asvo(result: JobResult):
     :param result: An instance of JobResult
     :return: None
     """
-    print("Pretending to be ASVO: Job result received: %s" % (result,))
+    LOGGER.info("Pretending to be ASVO: Job result received: %s" % (result,))
+
+

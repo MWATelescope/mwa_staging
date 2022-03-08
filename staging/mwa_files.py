@@ -5,13 +5,19 @@ library defining the same class and function, and import that from staged instea
 mwa_files.
 """
 
+import logging
 import os
+import traceback
 from typing import Optional
 
 from pydantic import BaseModel
 import requests
 
+logging.basicConfig()
+
 DATA_FILES_URL = 'http://ws.mwatelescope.org/metadata/data_files'
+
+LOGGER = logging.getLogger('mwa_files')
 
 
 class MWAObservation(BaseModel):
@@ -50,7 +56,15 @@ def get_mwa_files(obs: MWAObservation):
             'maxtime': maxtime,     # For VCS observations, only return files for before this time.
             'terse': True,          # Only return bucket, folder, and filename
             'all_files': False}     # Ignore files that have been archived, and have not been deleted
-    result = requests.get(DATA_FILES_URL, data=data)
+
+    try:
+        result = requests.get(DATA_FILES_URL, data=data)
+    except requests.Timeout:
+        LOGGER.error('Timout calling %s' % DATA_FILES_URL)
+        return None
+    except requests.RequestException:
+        LOGGER.error('Exception calling %s: %s' % (DATA_FILES_URL, traceback.format_exc()))
+        return
 
     if result.status_code == 200:
         pathlist = []

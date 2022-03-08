@@ -137,14 +137,16 @@ class ScoutAuth(AuthBase):
         return r
 
 
-def get_scout_token():
+def get_scout_token(refresh: bool = False):
     """
     Pass the Scout username/password to the SCOUT_LOGIN_URL, and return a token to use for
     subsequent queries.
+
+    :param refresh: boolean, if True, the cached value of the token won't be used.
     :return: token string
     """
     global SCOUT_API_TOKEN
-    if SCOUT_API_TOKEN:
+    if SCOUT_API_TOKEN and (not refresh):
         return SCOUT_API_TOKEN
     else:
         data = {'acct':config.SCOUT_API_USER,
@@ -244,6 +246,8 @@ def is_file_ready(filename):
     :return bool: True if the file is staged and ready.
     """
     result = requests.get(config.SCOUT_QUERY_URL, params={'path':filename}, auth=ScoutAuth(get_scout_token()))
+    if result.status_code == 401:
+        result = requests.get(config.SCOUT_QUERY_URL, params={'path': filename}, auth=ScoutAuth(get_scout_token(refresh=False)))
     resdict = result.json()
     print('Got status for file %s: %s' % (filename, resdict))
     return resdict['offlineblocks'] == 0
