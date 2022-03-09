@@ -17,12 +17,15 @@ from psycopg2 import extras
 from pydantic import BaseModel
 import requests
 from requests.auth import AuthBase
+from urllib3.exceptions import InsecureRequestWarning
+requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
 
 import logging
 
 logging.basicConfig()
 
 LOGGER = logging.getLogger('staged')
+LOGGER.setLevel(logging.DEBUG)
 
 from mwa_files import MWAObservation as Observation
 from mwa_files import get_mwa_files as get_files
@@ -332,10 +335,13 @@ def get_scout_token(refresh: bool = False):
     else:
         data = {'acct':config.SCOUT_API_USER,
                 'pass':config.SCOUT_API_PASSWORD}
-        result = requests.post(config.SCOUT_LOGIN_URL, json=data)
+        result = requests.post(config.SCOUT_LOGIN_URL, json=data, verify=False)
         if result.status_code == 200:
             SCOUT_API_TOKEN = result.json()['response']
+            LOGGER.debug('Got new token: %s' % SCOUT_API_TOKEN)
             return SCOUT_API_TOKEN
+        else:
+            LOGGER.error('Failed to get Scout token: %d:%s' % (result.status_code, result.text))
 
 
 def send_result(notify_url,
@@ -364,7 +370,7 @@ def send_result(notify_url,
             'error_files':error_files,
             'comment':comment}
     try:
-        LOGGER.debug(notify_url, (config.RESULT_USERNAME, config.RESULT_PASSWORD))
+        LOGGER.debug('Sending notification to %s(%s,%s): %s' % (notify_url, config.RESULT_USERNAME, config.RESULT_PASSWORD, data))
         result = requests.post(notify_url, json=data, auth=(config.RESULT_USERNAME, config.RESULT_PASSWORD), verify=False)
     except requests.Timeout:
         LOGGER.error('Timout calling notify_url: %s' % notify_url)
@@ -419,9 +425,13 @@ def create_job(job: NewJob):
         try:
             with DB:
                 data = {'path': pathlist, 'copy': 0, 'inode': []}
-                result = requests.post(config.SCOUT_STAGE_URL, json=data, auth=ScoutAuth(get_scout_token()))
-                if result.status_code == 401:
-                    result = requests.post(config.SCOUT_STAGE_URL, json=data, auth=ScoutAuth(get_scout_token(refresh=True)))
+                result = requests.post(config.SCOUT_STAGE_URL, json=data, auth=ScoutAuth(get_scout_token()), verify=False)
+                LOGGER.debug('First staging call: %d:%s' % (result.status_code, result.text))
+                if result.status_code == 403:
+                    result = requests.post(config.SCOUT_STAGE_URL, json=data, auth=ScoutAuth(get_scout_token(refresh=True)), verify=False)
+                    LOGGER.debug('Second staging call: %d:%s' % (result.status_code, result.text))
+
+                # LOGGER.debug('Got result from Scout API batchstage call: %d:%s' % (result.status_code, result.text))
                 ok = result.status_code == 200
 
                 if ok:
@@ -714,7 +724,7 @@ def dummy_scout_stage(stagedata: StageFiles, request:Request, response:Response)
         LOGGER.info("Pretending be Scout: Staging: %s" % (stagedata.path,))
     else:
         LOGGER.error("Pretending to be Scout - bad Authorization header: %s" % request.headers['Authorization'])
-        response.status_code = 401
+        response.status_code = 403
 
 
 @app.get("/v1/file",
@@ -743,7 +753,7 @@ def dummy_scout_status(request:Request, response:Response, path: str = Query(...
         return resp
     else:
         LOGGER.error("Pretending to be Scout - bad Authorization header: %s" % request.headers['Authorization'])
-        response.status_code = 401
+        response.status_code = 403
 
 
 @app.post("/jobresult",
