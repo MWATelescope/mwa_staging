@@ -100,12 +100,13 @@ WHERE job_id = %s
 
 # Job return codes:
 
-JOB_SUCCESS = 0                # All files staged successfully
-JOB_TIMEOUT = 10               # Timeout waiting for all files to stage - comment field will contain number of staged and outstanding files
-JOB_FILE_LOOKUP_FAILED = 100   # Failed to look up files associated with the given observation (eg failure in metadata/data_files web service call)
-JOB_NO_FILES = 101             # No files to stage
-JOB_SCOUT_CALL_FAILED = 102    # Failure in call to Scout API to stage files
-JOB_CREATION_EXCEPTION = 199   # An exception occurred while creating the job. Comment field will contain exception traceback
+JOB_SUCCESS = 0                 # All files staged successfully
+JOB_TIMEOUT = 10                # Timeout waiting for all files to stage - comment field will contain number of staged and outstanding files
+JOB_FILE_LOOKUP_FAILED = 100    # Failed to look up files associated with the given observation (eg failure in metadata/data_files web service call)
+JOB_NO_FILES = 101              # No files to stage
+JOB_SCOUT_CALL_FAILED = 102     # Failure in call to Scout API to stage files
+JOB_SCOUT_FILE_NOT_FOUND = 103  # One or more of the files requested for staging were not found on the Scout filesystem
+JOB_CREATION_EXCEPTION = 199    # An exception occurred while creating the job. Comment field will contain exception traceback
 
 DUMMY_TOKEN = "This is a real token, honest!"    # Used by the dummy Scout API endpoints
 
@@ -371,7 +372,7 @@ def send_result(notify_url,
             'comment':comment}
     try:
         LOGGER.debug('Sending notification to %s(%s,%s): %s' % (notify_url, config.RESULT_USERNAME, config.RESULT_PASSWORD, data))
-        result = requests.post(notify_url, json=data, auth=(config.RESULT_USERNAME, config.RESULT_PASSWORD), verify=False)
+        result = requests.post(notify_url, json=data, verify=False, auth=(config.RESULT_USERNAME, config.RESULT_PASSWORD))
     except requests.Timeout:
         LOGGER.error('Timout calling notify_url: %s' % notify_url)
         return None
@@ -425,16 +426,15 @@ def create_job(job: NewJob):
         try:
             with DB:
                 data = {'path': pathlist, 'copy': 0, 'inode': []}
-                result = requests.post(config.SCOUT_STAGE_URL, json=data, auth=ScoutAuth(get_scout_token()), verify=False)
+                result = requests.put(config.SCOUT_STAGE_URL, json=data, auth=ScoutAuth(get_scout_token()), verify=False)
                 LOGGER.debug('First staging call: %d:%s' % (result.status_code, result.text))
                 if result.status_code == 403:
-                    result = requests.post(config.SCOUT_STAGE_URL, json=data, auth=ScoutAuth(get_scout_token(refresh=True)), verify=False)
+                    result = requests.put(config.SCOUT_STAGE_URL, json=data, auth=ScoutAuth(get_scout_token(refresh=True)), verify=False)
                     LOGGER.debug('Second staging call: %d:%s' % (result.status_code, result.text))
 
                 # LOGGER.debug('Got result from Scout API batchstage call: %d:%s' % (result.status_code, result.text))
-                ok = result.status_code == 200
 
-                if ok:
+                if result.status_code == 200:   # All files requested to be staged
                     with DB.cursor() as curs:
                         curs.execute(CREATE_JOB, (job.job_id,  # job_id
                                                   job.notify_url,  # URL to call on success/failure
@@ -445,7 +445,7 @@ def create_job(job: NewJob):
                     send_result(notify_url=job.notify_url,
                                 job_id=job.job_id,
                                 return_code=JOB_SCOUT_CALL_FAILED,
-                                comment='Failed to contact the Scout API to stage the files.')
+                                comment='Scout API returned an error: %s' % result.text)
         except:
             send_result(notify_url=job.notify_url,
                         job_id=job.job_id,
@@ -461,7 +461,7 @@ app = FastAPI()
 
 
 @app.post("/staging/",
-          status_code=status.HTTP_201_CREATED,
+          status_code=status.HTTP_202_ACCEPTED,
           responses={403:{'model':ErrorResult}, 500:{'model':ErrorResult}, 502:{'model':ErrorResult}})
 async def new_job(job: NewJob, background_tasks: BackgroundTasks, response:Response):
     """
