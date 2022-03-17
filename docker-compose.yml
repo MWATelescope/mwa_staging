@@ -107,10 +107,10 @@ services:
     ports:
       - '8080:8080'
     secrets:
-      - pawsey-cacert.crt
+      - pawsey.crt
 volumes:
   pgdata:
   pgadmin:
 secrets:
-  pawsey-cacert.crt:
-    file: ./certs/pawsey-cacert.crt
+  pawsey.crt:
+    file: ./certs/pawsey.crt
