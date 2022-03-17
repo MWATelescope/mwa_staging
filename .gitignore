@@ -1,3 +1,4 @@
 .python-version
 .envrc
 config/
+pawsey-cacert.crt
