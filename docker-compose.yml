@@ -99,6 +99,18 @@ services:
       DBNAME: ${DBNAME}
     volumes:
       - ./staging:/usr/src/app
+  haproxy:
+    build:
+      dockerfile: Dockerfile.dev
+      context: ./haproxy
+    restart: always
+    ports:
+      - '8080:8080'
+    secrets:
+      - pawsey-cacert.crt
 volumes:
   pgdata:
   pgadmin:
+secrets:
+  pawsey-cacert.crt:
+    file: ./certs/pawsey-cacert.crt
