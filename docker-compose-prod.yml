@@ -1,11 +1,12 @@
-version: '3'
+version: '2.1'
 services:
   api:
     build:
       dockerfile: Dockerfile
       context: ./staging
     depends_on:
-      - "db"
+      db:
+        condition: service_healthy
     environment:
       SCOUT_API_USER: ${SCOUT_API_USER}
       SCOUT_API_PASSWORD: ${SCOUT_API_PASSWORD}
@@ -29,6 +30,11 @@ services:
       POSTGRES_USER: ${DBUSER}
       POSTGRES_PASSWORD: ${DBPASSWORD}
       POSTGRES_DB: ${DBNAME}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     volumes:
       - pgdata:/var/lib/postgresql/data
   nginx:
@@ -46,6 +52,9 @@ services:
     build:
       dockerfile: Dockerfile
       context: ./staging
+    depends_on:
+      db:
+        condition: service_healthy
     command: pipenv run python kafkad.py
     environment:
       MWA_TOPIC: mwa
@@ -63,11 +72,11 @@ services:
       DBNAME: ${DBNAME}
   haproxy:
     build:
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.dev
       context: ./haproxy
     restart: always
     ports:
-      - '8080:8080'
+      - '8081:8081'
     volumes:
       - ./config:/etc/pawsey-tls/latest/haproxy/
 volumes:

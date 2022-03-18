@@ -1,11 +1,12 @@
-version: '3'
+version: '2.1'
 services:
   api:
     build:
       dockerfile: Dockerfile
       context: ./staging
     depends_on:
-      - "db"
+      db:
+        condition: service_healthy
     environment:
       SCOUT_API_USER: ${SCOUT_API_USER}
       SCOUT_API_PASSWORD: ${SCOUT_API_PASSWORD}
@@ -29,13 +30,19 @@ services:
       POSTGRES_USER: ${DBUSER}
       POSTGRES_PASSWORD: ${DBPASSWORD}
       POSTGRES_DB: ${DBNAME}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     volumes:
       - pgdata:/var/lib/postgresql/data
   pgadmin:
     image: dpage/pgadmin4
     restart: always
     depends_on:
-      - "db"
+      db:
+        condition: service_healthy
     environment:
       PGADMIN_DEFAULT_EMAIL: test@test.com
       PGADMIN_DEFAULT_PASSWORD: root
@@ -80,8 +87,8 @@ services:
       context: ./staging
     command: pipenv run python kafkad.py
     restart: on-failure
-    depends_on: 
-      kafka:
+    depends_on:
+      db:
         condition: service_healthy
     environment:
       MWA_TOPIC: mwa
