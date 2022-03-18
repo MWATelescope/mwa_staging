@@ -481,7 +481,7 @@ def MonitorJobs(consumer):
 
 if __name__ == '__main__':
     consumer = KafkaConsumer(config.MWA_TOPIC,
-                             bootstrap_servers=config.KAFKA_SERVER,
+                             bootstrap_servers=[config.KAFKA_SERVER],
                              auto_offset_reset='earliest',
                              enable_auto_commit=False,
                              group_id='mwa_staging',
