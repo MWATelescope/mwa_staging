@@ -29,22 +29,42 @@ Sample Kafka messages:
 An empty error string indicates no error on the stage.
 """
 
+print('Importing files in kafkad.py')
+
 import os
 import json
 import datetime
 from datetime import timezone
+import logging
 import threading
 import time
 import traceback
+import sys
+
+
+class MWALogFormatter(logging.Formatter):
+    def format(self, record):
+        return "%s: time %10.6f - %s" % (record.levelname, time.time(), record.getMessage())
+
+
+mwalf = MWALogFormatter()
+LOGLEVEL_CONSOLE = logging.INFO    # INFO and above will be printed to STDOUT as well as the logfile
+LOGGER = logging.getLogger()
+LOGGER.setLevel(logging.DEBUG)
+ch = logging.StreamHandler()
+ch.setLevel(LOGLEVEL_CONSOLE)
+ch.setFormatter(mwalf)
+LOGGER.addHandler(ch)
+
 import psycopg2
+
 import requests
 from requests.auth import AuthBase
 
-
-import logging
-
-logging.basicConfig()
-LOGGER = logging.getLogger('staged')
+sys.stdout.write('This is to stdout\n')
+sys.stderr.write('This is to stderr\n')
+# sys.stdout.flush()
+# sys.stderr.flush()
 
 from kafka import errors, KafkaConsumer
 
@@ -336,6 +356,7 @@ def HandleMessages(consumer):
                              host=config.DBHOST,
                              database=config.DBNAME)
     for msg in consumer:
+        LOGGER.debug('Got Kafka message: %s' % msg)
         try:
             filename, rowcount = process_message(msg, msgdb)
             if rowcount:
@@ -480,13 +501,16 @@ def MonitorJobs(consumer):
 
 
 if __name__ == '__main__':
+    print('Sleeping for 5 seconds.')
+    LOGGER.info('Sleeping for 5 seconds to give the database time to start up.')
+    time.sleep(5)
     consumer = KafkaConsumer(config.MWA_TOPIC,
                              bootstrap_servers=[config.KAFKA_SERVER],
                              auto_offset_reset='earliest',
                              enable_auto_commit=False,
                              group_id='mwa_staging',
                              value_deserializer=lambda x: json.loads(x.decode('utf-8')))
-
+    LOGGER.info('Connected to Kafka server.')
     # Start the thread that monitors job state and sends completion notifications as necessary
     jobthread = threading.Thread(target=MonitorJobs, name='MonitorJobs', args=(consumer,))
     jobthread.daemon = True  # Stop this thread when the main program exits.

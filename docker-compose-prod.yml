@@ -22,6 +22,7 @@ services:
     volumes:
       - ./staging:/usr/src/app
   db:
+    user: postgres
     build:
       dockerfile: Dockerfile
       context: ./postgres
@@ -37,6 +38,7 @@ services:
       retries: 5
     volumes:
       - pgdata:/var/lib/postgresql/data
+    stop_grace_period: 10s
   nginx:
     build:
       dockerfile: Dockerfile
@@ -49,16 +51,18 @@ services:
     volumes:
       - ./config:/etc/nginx/certs
   kafkad:
+    tty: true
     build:
       dockerfile: Dockerfile
       context: ./staging
     depends_on:
       db:
         condition: service_healthy
-    command: pipenv run python kafkad.py
+    command: pipenv run python -u kafkad.py
     environment:
-      MWA_TOPIC: mwa
-      KAFKA_SERVER: kafka:9092
+      PYTHONUNBUFFERED: 1
+      MWA_TOPIC: ${MWA_TOPIC}
+      KAFKA_SERVER: ${KAFKA_SERVER}
       RESULT_USERNAME: ${RESULT_USERNAME}
       RESULT_PASSWORD: ${RESULT_PASSWORD}
       SCOUT_API_USER: ${SCOUT_API_USER}

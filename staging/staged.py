@@ -8,6 +8,7 @@ This file implements the REST API for accepting requests from ASVO, and another 
 import datetime
 from datetime import timezone
 import os
+import time
 from typing import Optional
 
 import traceback
@@ -52,6 +53,8 @@ class ApiConfig():
 config = ApiConfig()
 
 SCOUT_API_TOKEN = ''
+LOGGER.info('Sleeping for 5 seconds to give the database time to start up.')
+time.sleep(5)
 DB = psycopg2.connect(user=config.DBUSER,
                       password=config.DBPASSWORD,
                       host=config.DBHOST,

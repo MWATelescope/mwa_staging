@@ -85,14 +85,15 @@ services:
     build:
       dockerfile: Dockerfile
       context: ./staging
-    command: pipenv run python kafkad.py
+    command: pipenv run python -u kafkad.py
     restart: on-failure
     depends_on:
       db:
         condition: service_healthy
     environment:
-      MWA_TOPIC: mwa
-      KAFKA_SERVER: kafka:9092
+      PYTHONUNBUFFERED: 1
+      MWA_TOPIC: ${MWA_TOPIC}
+      KAFKA_SERVER: ${KAFKA_SERVER}
       RESULT_USERNAME: ${RESULT_USERNAME}
       RESULT_PASSWORD: ${RESULT_PASSWORD}
       SCOUT_API_USER: ${SCOUT_API_USER}
