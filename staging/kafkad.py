@@ -29,8 +29,6 @@ Sample Kafka messages:
 An empty error string indicates no error on the stage.
 """
 
-print('Importing files in kafkad.py')
-
 import os
 import json
 import datetime
@@ -40,34 +38,13 @@ import threading
 import time
 import traceback
 import sys
-
-
-class MWALogFormatter(logging.Formatter):
-    def format(self, record):
-        return "%s: time %10.6f - %s" % (record.levelname, time.time(), record.getMessage())
-
-
-mwalf = MWALogFormatter()
-LOGLEVEL_CONSOLE = logging.INFO    # INFO and above will be printed to STDOUT as well as the logfile
-LOGGER = logging.getLogger()
-LOGGER.setLevel(logging.DEBUG)
-ch = logging.StreamHandler()
-ch.setLevel(LOGLEVEL_CONSOLE)
-ch.setFormatter(mwalf)
-LOGGER.addHandler(ch)
-
 import psycopg2
-
 import requests
 from requests.auth import AuthBase
-
-sys.stdout.write('This is to stdout\n')
-sys.stderr.write('This is to stderr\n')
-# sys.stdout.flush()
-# sys.stderr.flush()
-
 from kafka import errors, KafkaConsumer
 
+logging.basicConfig(level=logging.DEBUG, format='[%(asctime)s %(levelname)s] %(message)s')
+LOGGER = logging.getLogger('staged')
 
 CHECK_INTERVAL = 60    # Check all job status details once every minute.
 RETRY_INTERVAL = 600   # Re-try notifying ASVO about completed jobs every 10 minutes until we succeed
@@ -501,20 +478,21 @@ def MonitorJobs(consumer):
 
 
 if __name__ == '__main__':
-    print('Sleeping for 5 seconds.')
-    LOGGER.info('Sleeping for 5 seconds to give the database time to start up.')
-    time.sleep(5)
-    consumer = KafkaConsumer(config.MWA_TOPIC,
-                             bootstrap_servers=[config.KAFKA_SERVER],
-                             auto_offset_reset='earliest',
-                             enable_auto_commit=False,
-                             group_id='mwa_staging',
-                             value_deserializer=lambda x: json.loads(x.decode('utf-8')))
-    LOGGER.info('Connected to Kafka server.')
-    # Start the thread that monitors job state and sends completion notifications as necessary
-    jobthread = threading.Thread(target=MonitorJobs, name='MonitorJobs', args=(consumer,))
-    jobthread.daemon = True  # Stop this thread when the main program exits.
-    jobthread.start()
+    try:
+        consumer = KafkaConsumer(config.MWA_TOPIC,
+                                bootstrap_servers=[config.KAFKA_SERVER],
+                                auto_offset_reset='earliest',
+                                enable_auto_commit=False,
+                                group_id='mwa_staging',
+                                value_deserializer=lambda x: json.loads(x.decode('utf-8')))
+        LOGGER.info('Connected to Kafka server.')
+        # Start the thread that monitors job state and sends completion notifications as necessary
+        jobthread = threading.Thread(target=MonitorJobs, name='MonitorJobs', args=(consumer,))
+        jobthread.daemon = True  # Stop this thread when the main program exits.
+        jobthread.start()
 
-    # Start processing Kafka messages
-    HandleMessages(consumer)  # Never exits.
+        # Start processing Kafka messages
+        HandleMessages(consumer)  # Never exits.
+    except errors.NoBrokersAvailable as e:
+        LOGGER.error('Unable to connect to Kafka server.')
+        LOGGER.error(e)

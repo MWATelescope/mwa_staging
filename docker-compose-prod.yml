@@ -51,14 +51,14 @@ services:
     volumes:
       - ./config:/etc/nginx/certs
   kafkad:
-    tty: true
     build:
       dockerfile: Dockerfile
       context: ./staging
+    command: pipenv run python -u kafkad.py
+    tty: true
     depends_on:
       db:
         condition: service_healthy
-    command: pipenv run python -u kafkad.py
     environment:
       PYTHONUNBUFFERED: 1
       MWA_TOPIC: ${MWA_TOPIC}
@@ -74,6 +74,8 @@ services:
       DBPASSWORD: ${DBPASSWORD}
       DBHOST: ${DBHOST}
       DBNAME: ${DBNAME}
+    volumes:
+      - ./staging:/usr/src/app
   haproxy:
     build:
       dockerfile: Dockerfile.dev

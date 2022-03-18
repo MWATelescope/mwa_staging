@@ -86,9 +86,11 @@ services:
       dockerfile: Dockerfile
       context: ./staging
     command: pipenv run python -u kafkad.py
-    restart: on-failure
+    tty: true
     depends_on:
       db:
+        condition: service_healthy
+      kafka:
         condition: service_healthy
     environment:
       PYTHONUNBUFFERED: 1
@@ -113,7 +115,7 @@ services:
       context: ./haproxy
     restart: always
     ports:
-      - '8080:8080'
+      - '8081:8081'
     volumes:
       - ./config:/etc/pawsey-tls/latest/haproxy/
 volumes:

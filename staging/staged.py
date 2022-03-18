@@ -10,7 +10,7 @@ from datetime import timezone
 import os
 import time
 from typing import Optional
-
+import logging
 import traceback
 from fastapi import FastAPI, BackgroundTasks, Query, Request, Response, status
 import psycopg2
@@ -19,17 +19,14 @@ from pydantic import BaseModel
 import requests
 from requests.auth import AuthBase
 from urllib3.exceptions import InsecureRequestWarning
-requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
-
-import logging
-
-logging.basicConfig()
-
-LOGGER = logging.getLogger('staged')
-LOGGER.setLevel(logging.DEBUG)
-
 from mwa_files import MWAObservation as Observation
 from mwa_files import get_mwa_files as get_files
+
+
+requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
+
+logging.basicConfig(level=logging.DEBUG, format='[%(asctime)s %(levelname)s] %(message)s')
+LOGGER = logging.getLogger('staged')
 
 
 class ApiConfig():
@@ -53,8 +50,7 @@ class ApiConfig():
 config = ApiConfig()
 
 SCOUT_API_TOKEN = ''
-LOGGER.info('Sleeping for 5 seconds to give the database time to start up.')
-time.sleep(5)
+
 DB = psycopg2.connect(user=config.DBUSER,
                       password=config.DBPASSWORD,
                       host=config.DBHOST,
