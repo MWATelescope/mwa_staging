@@ -68,11 +68,7 @@ services:
     restart: always
     ports:
       - '8080:8080'
-    secrets:
-      - pawsey.crt
+    volumes:
+      - ./config:/etc/pawsey-tls/latest/haproxy/
 volumes:
   pgdata:
-
-secrets:
-  pawsey.crt:
-    file: ./certs/pawsey.crt
