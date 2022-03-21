@@ -57,8 +57,8 @@ DB = psycopg2.connect(user=config.DBUSER,
                       database=config.DBNAME)
 
 CREATE_JOB = """
-INSERT INTO staging_jobs (job_id, notify_url, created, completed, total_files, notified)
-VALUES (%s, %s, %s, false, %s, false)
+INSERT INTO staging_jobs (job_id, notify_url, created, completed, total_files, notified, checked)
+VALUES (%s, %s, %s, false, %s, false, false)
 """
 
 DELETE_JOB = """
@@ -67,7 +67,7 @@ WHERE job_id = %s
 """
 
 WRITE_FILES = """
-INSERT INTO files (job_id, filename, ready, error)
+INSERT INTO files (job_id, filename, ready, error) 
 VALUES %s
 """
 
@@ -424,7 +424,7 @@ def create_job(job: NewJob):
     else:
         try:
             with DB:
-                data = {'path': pathlist, 'copy': 0, 'inode': []}
+                data = {'path': pathlist, 'copy': 0, 'inode': [], 'key':'mwa', 'topic':'mwa'}
                 result = requests.put(config.SCOUT_STAGE_URL, json=data, auth=ScoutAuth(get_scout_token()), verify=False)
                 LOGGER.debug('First staging call: %d:%s' % (result.status_code, result.text))
                 if result.status_code == 403:
