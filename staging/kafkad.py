@@ -12,6 +12,11 @@ To test with manually generated Kafka messages, eg:
 >>> p.send('mwa', {'filename':'gibber'})
 >>> p.send('mwa', {'filename':'foo'})
 
+To view messages, do:
+
+from kafka import KafkaConsumer
+c = KafkaConsumer('mwa', bootstrap_servers=['scoutam.pawsey.org.au:9092'], auto_offset_reset='earliest', enable_auto_commit=False, group_id='mwa_staging')
+
 From Harrison:
 I’ve setup rclone as the ubuntu user and added the test vm as a remote called test. Just type rclone and it gives you the help menu for how to use it, it’s got a really nice CLI
 
