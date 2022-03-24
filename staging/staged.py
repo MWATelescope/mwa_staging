@@ -8,10 +8,10 @@ This file implements the REST API for accepting requests from ASVO, and another 
 import datetime
 from datetime import timezone
 import os
-import time
 from typing import Optional
 import logging
 import traceback
+
 from fastapi import FastAPI, BackgroundTasks, Query, Request, Response, status
 import psycopg2
 from psycopg2 import extras
@@ -19,14 +19,23 @@ from pydantic import BaseModel
 import requests
 from requests.auth import AuthBase
 from urllib3.exceptions import InsecureRequestWarning
+
 from mwa_files import MWAObservation as Observation
 from mwa_files import get_mwa_files as get_files
 
-
+# noinspection PyUnresolvedReferences
 requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
 
-logging.basicConfig(level=logging.DEBUG, format='[%(asctime)s %(levelname)s] %(message)s')
+# logging.basicConfig(level=logging.DEBUG, format='[%(asctime)s %(levelname)s] %(message)s')
+
+LOGLEVEL = logging.DEBUG
+
 LOGGER = logging.getLogger('staged')
+LOGGER.setLevel(LOGLEVEL)
+ch = logging.StreamHandler()
+ch.setLevel(LOGLEVEL)
+ch.setFormatter(logging.Formatter(fmt='[%(asctime)s %(levelname)s] %(message)s'))
+LOGGER.addHandler(ch)
 
 
 class ApiConfig():
@@ -196,14 +205,14 @@ class GlobalStatistics(BaseModel):
     ready_files: i      Total number of files staged so far\n
     unready_files:      Number of files we are waiting to be staged\n
     """
-    kafkad_heartbeat: Optional[float] # Timestamp when kafkad.py last updated its status table
-    kafka_alive: bool = False         # Is the remote kafka daemon alive?
-    last_message: Optional[float]     # Timestamp when the last valid file status message was received
-    completed_jobs: int = 0           # Total number of jobs with all files staged
-    incomplete_jobs: int = 0          # Number of jobs waiting for files to be staged
-    ready_files: int = 0              # Total number of files staged successfully so far
-    error_files: int = 0              # Number of files for which Kafka reported an error
-    waiting_files: int = 0            # Number of files we have still waiting to be staged
+    kafkad_heartbeat: Optional[float]  # Timestamp when kafkad.py last updated its status table
+    kafka_alive: bool = False          # Is the remote kafka daemon alive?
+    last_message: Optional[float]      # Timestamp when the last valid file status message was received
+    completed_jobs: int = 0            # Total number of jobs with all files staged
+    incomplete_jobs: int = 0           # Number of jobs waiting for files to be staged
+    ready_files: int = 0               # Total number of files staged successfully so far
+    error_files: int = 0               # Number of files for which Kafka reported an error
+    waiting_files: int = 0             # Number of files we have still waiting to be staged
 
 
 class JobList(BaseModel):

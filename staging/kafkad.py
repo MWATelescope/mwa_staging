@@ -47,16 +47,20 @@ from urllib3.exceptions import InsecureRequestWarning
 
 import psycopg2
 import requests
-
-logging.basicConfig(level=logging.INFO, format='[%(asctime)s %(levelname)s] %(message)s')
-
 from requests.auth import AuthBase
 from kafka import errors, KafkaConsumer
 
-requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
+LOGLEVEL = logging.DEBUG
 
-LOGGER = logging.getLogger('staged')
-LOGGER.setLevel(logging.DEBUG)
+LOGGER = logging.getLogger('kafkad')
+LOGGER.setLevel(LOGLEVEL)
+ch = logging.StreamHandler()
+ch.setLevel(LOGLEVEL)
+ch.setFormatter(logging.Formatter(fmt='[%(asctime)s %(levelname)s] %(message)s'))
+LOGGER.addHandler(ch)
+
+# noinspection PyUnresolvedReferences
+requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
 
 CHECK_INTERVAL = 60    # Check all job status details once every minute.
 RETRY_INTERVAL = 600   # Re-try notifying ASVO about completed jobs every 10 minutes until we succeed
