@@ -51,7 +51,7 @@ def get_mwa_files(obs: MWAObservation):
         mintime = None
         maxtime = None
     data = {'obs_id': obs.obs_id,   # Return files associated with this obs_id
-            'location': 2,          # Must be on tape (Banksia)
+            'location': 3,          # Must be on tape (Banksia)
             'mintime': mintime,     # For VCS observations, only return files for at or after this time
             'maxtime': maxtime,     # For VCS observations, only return files for before this time.
             'terse': True,          # Only return bucket, folder, and filename
