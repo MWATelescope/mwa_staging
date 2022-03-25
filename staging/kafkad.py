@@ -16,6 +16,7 @@ To view messages, do:
 
 from kafka import KafkaConsumer
 c = KafkaConsumer('mwa', bootstrap_servers=['scoutam.pawsey.org.au:9092'], auto_offset_reset='earliest', enable_auto_commit=False, group_id='mwa_staging')
+c.topics()
 
 From Harrison:
 I’ve setup rclone as the ubuntu user and added the test vm as a remote called test. Just type rclone and it gives you the help menu for how to use it, it’s got a really nice CLI
@@ -39,6 +40,7 @@ import json
 import datetime
 from datetime import timezone
 import logging
+import ssl
 import threading
 import time
 import traceback
@@ -98,8 +100,10 @@ class KafkadConfig():
     """Config class, used to load configuration data from environment variables.
     """
     def __init__(self):
-        self.MWA_TOPIC = os.getenv('MWA_TOPIC')  # Kafka topic to listen on
+        self.KAFKA_TOPIC = os.getenv('KAFKA_TOPIC')
         self.KAFKA_SERVER = os.getenv('KAFKA_SERVER')
+        self.KAFKA_USER = os.getenv('KAFKA_USER')
+        self.KAFKA_PASSWORD = os.getenv('KAFKA_PASSWORD')
 
         self.SCOUT_LOGIN_URL = os.getenv('SCOUT_LOGIN_URL')
         self.SCOUT_API_USER = os.getenv('SCOUT_API_USER')
@@ -371,7 +375,7 @@ def HandleMessages(consumer):
         except:
             LOGGER.error(traceback.format_exc())
             return
-        finally:
+        else:
             consumer.commit()   # Tell the Kafka server we've processed that message, so we don't see it again.
 
 
@@ -508,11 +512,19 @@ def MonitorJobs(consumer):
 
 if __name__ == '__main__':
     try:
-        consumer = KafkaConsumer(config.MWA_TOPIC,
+        ssl_settings = ssl.SSLContext(ssl.PROTOCOL_TLS)
+        ssl_settings.verify_mode = ssl.CERT_NONE
+
+        consumer = KafkaConsumer(config.KAFKA_TOPIC,
                                  bootstrap_servers=[config.KAFKA_SERVER],
                                  auto_offset_reset='earliest',
                                  enable_auto_commit=False,
-                                 group_id='mwa_staging',
+#                                 group_id='mwa_staging',
+                                 sasl_mechanism='SCRAM-SHA-256',
+                                 sasl_plain_username=config.KAFKA_USER,
+                                 sasl_plain_password=config.KAFKA_PASSWORD,
+                                 security_protocol='SASL_SSL',
+                                 ssl_context=ssl_settings,
                                  value_deserializer=lambda x: json.loads(x.decode('utf-8')))
         LOGGER.info('Connected to Kafka server.')
         # Start the thread that monitors job state and sends completion notifications as necessary

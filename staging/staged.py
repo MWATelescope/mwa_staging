@@ -52,6 +52,8 @@ class ApiConfig():
         self.SCOUT_API_USER = os.getenv('SCOUT_API_USER')
         self.SCOUT_API_PASSWORD = os.getenv('SCOUT_API_PASSWORD')
 
+        self.KAFKA_TOPIC = os.getenv('KAFKA_TOPIC')
+
         self.RESULT_USERNAME = os.getenv('RESULT_USERNAME')
         self.RESULT_PASSWORD = os.getenv('RESULT_PASSWORD')
 
@@ -433,7 +435,7 @@ def create_job(job: NewJob):
     else:
         try:
             with DB:
-                data = {'path': pathlist, 'copy': 0, 'inode': [], 'key':'mwa', 'topic':'mwa'}
+                data = {'path': pathlist, 'copy': 0, 'inode': [], 'key':str(job.job_id), 'topic':config.KAFKA_TOPIC}
                 result = requests.put(config.SCOUT_STAGE_URL, json=data, auth=ScoutAuth(get_scout_token()), verify=False)
                 LOGGER.debug('First staging call: %d:%s' % (result.status_code, result.text))
                 if result.status_code == 403:
