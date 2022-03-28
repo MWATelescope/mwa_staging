@@ -519,7 +519,7 @@ if __name__ == '__main__':
                                  bootstrap_servers=[config.KAFKA_SERVER],
                                  auto_offset_reset='earliest',
                                  enable_auto_commit=False,
-#                                 group_id='mwa_staging',
+                                 group_id='mwagroup',
                                  sasl_mechanism='SCRAM-SHA-256',
                                  sasl_plain_username=config.KAFKA_USER,
                                  sasl_plain_password=config.KAFKA_PASSWORD,
