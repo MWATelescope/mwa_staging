@@ -10,7 +10,7 @@ Banksia provides a Rest API for interacting with the system, and an S3 compliant
 
 We use two different sets of Docker containers, one for development, and another for production. These can be started easily by using the included compose file.
 
-##High Level Architecture
+## High Level Architecture
 Once the stack is running, an NGINX web server will proxy requests to a Python FastAPI web server. Once a request for files has been received (either in the form of an obs_id or file list), FastAPI will look up the files in the main MWA Telescope database and create new records in the Postgres Database and return a response.
 
 It will then send a request to the Banksia API to ask it to stage the requested files. In the production Banksia system, there are 6 so called "vss" nodes which are running the API. We therefore use HA Proxy on the client side to load balance requests between each of these nodes.
