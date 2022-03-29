@@ -473,6 +473,7 @@ app = FastAPI()
 @app.post("/staging/",
           status_code=status.HTTP_202_ACCEPTED,
           responses={403:{'model':ErrorResult}, 500:{'model':ErrorResult}, 502:{'model':ErrorResult}})
+@app.post("/staging", include_in_schema=False)
 async def new_job(job: NewJob, background_tasks: BackgroundTasks, response:Response):
     """
     POST API to create a new staging job. Accepts a JSON dictionary defined above by the Job() class,
@@ -523,6 +524,7 @@ async def new_job(job: NewJob, background_tasks: BackgroundTasks, response:Respo
 @app.get("/staging/",
          status_code=status.HTTP_200_OK,
          responses={200:{'model':JobStatus}, 404:{'model':ErrorResult}, 500:{'model':ErrorResult}})
+@app.get("/staging", include_in_schema=False)
 def read_status(job_id: int, response:Response, include_files: bool = False):
     """
     GET API to read status details about an existing staging job. Accepts job_id and (optional) include_files
@@ -583,6 +585,7 @@ def read_status(job_id: int, response:Response, include_files: bool = False):
 @app.delete("/staging/",
             status_code=status.HTTP_200_OK,
             responses={404:{'model':ErrorResult}, 500:{'model':ErrorResult}})
+@app.delete("/staging", include_in_schema=False)
 def delete_job(job_id: int, response:Response):
     """
     POST API to delete a staging job. Accepts an integer job_id value, to be deleted.
@@ -608,7 +611,8 @@ def delete_job(job_id: int, response:Response):
         return ErrorResult(errormsg='Exception staging job %d: %s' % (job_id, exc_str))
 
 
-@app.get("/ping")
+@app.get("/ping/")
+@app.get("/ping", include_in_schema=False)
 def ping():
     """
     GET API to return nothing, with a 200 status code, if we are alive. If we're not alive, this function won't be
@@ -619,9 +623,10 @@ def ping():
     return
 
 
-@app.get("/get_stats",
+@app.get("/get_stats/",
          status_code=status.HTTP_200_OK,
          responses={200:{'model':GlobalStatistics}, 500:{'model':ErrorResult}})
+@app.get("/get_stats", include_in_schema=False)
 def get_stats(response:Response):
     """
     GET API to return an overall job and file statistics for this process (the staging web server)
@@ -671,9 +676,10 @@ def get_stats(response:Response):
         return ErrorResult(errormsg='Exception getting status: %s' % (exc_str,))
 
 
-@app.get("/get_joblist",
+@app.get("/get_joblist/",
          status_code=status.HTTP_200_OK,
          responses={200:{'model':JobList}, 500:{'model':ErrorResult}})
+@app.get("/get_joblist", include_in_schema=False)
 def get_joblist(response:Response):
     """
     GET API to return a list of all jobs, giving the number of staged files, the total number of files, and the
@@ -699,9 +705,10 @@ def get_joblist(response:Response):
         return ErrorResult(errormsg='Exception getting status: %s' % (exc_str,))
 
 
-@app.post("/v1/security/login",
+@app.post("/v1/security/login/",
           status_code=status.HTTP_200_OK,
           response_model=ScoutLoginResponse)
+@app.post("/v1/security/login", include_in_schema=False)
 def dummy_scout_login(account: ScoutLogin, response:Response):
     """
     Emulate Scout API for development. Takes an account name and password, returns a token string.
@@ -717,8 +724,9 @@ def dummy_scout_login(account: ScoutLogin, response:Response):
         return
 
 
-@app.post("/v1/request/batchstage",
+@app.post("/v1/request/batchstage/",
           status_code=status.HTTP_200_OK)
+@app.post("/v1/request/batchstage", include_in_schema=False)
 def dummy_scout_stage(stagedata: StageFiles, request:Request, response:Response):
     """
     Emulate Scout's staging server for development. 'Stages' the files passed in the list of filenames.
@@ -737,9 +745,10 @@ def dummy_scout_stage(stagedata: StageFiles, request:Request, response:Response)
         response.status_code = 403
 
 
-@app.get("/v1/file",
+@app.get("/v1/file/",
          status_code=status.HTTP_200_OK,
          response_model=ScoutFileStatus)
+@app.get("/v1/file", include_in_schema=False)
 def dummy_scout_status(request:Request, response:Response, path: str = Query(...)):
     """
     Emulate Scout's staging server for development. Returns a status structure for the given (single) file.
@@ -766,8 +775,9 @@ def dummy_scout_status(request:Request, response:Response, path: str = Query(...
         response.status_code = 403
 
 
-@app.post("/jobresult",
+@app.post("/jobresult/",
           status_code=status.HTTP_200_OK)
+@app.post("/jobresult", include_in_schema=False)
 def dummy_asvo(result: JobResult):
     """
     Emulate ASVO server for development. Used to pass a job result back to ASVO, when all files are staged, or when
