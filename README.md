@@ -25,27 +25,35 @@ As files are being copied off of tape and onto cache, Banksia will publish messa
 ### Environment Variables
 We make use of environment variables to store configuration information. A template containing the required variables is included below. We recommend using [direnv](https://direnv.net/) to manage this config.
 ```bash
+# Credentials to pass to the Scout API to stage files and request file status
 export SCOUT_API_USER=
 export SCOUT_API_PASSWORD=
 
+# The Scout API endpoints to stage files and request file status.
+# Note that tha staged.py API includes dummy versions of these endpoints
+# for testing - use a prefix of http://localhost:8000/ for this.
 export SCOUT_LOGIN_URL=https://haproxy:8081/v1/security/login
 export SCOUT_QUERY_URL=https://haproxy:8081/v1/file
 export SCOUT_STAGE_URL=https://haproxy:8081/v1/request/batchstage
 
+# The Basic Auth credentials to pass to the 'notify_url' given when a job is created
 export RESULT_USERNAME=
 export RESULT_PASSWORD=
 
+# PostgreSQL database parameters for maintaining the current job and file lists
 export DBUSER=
 export DBPASSWORD=
 export DBHOST=
 export DBNAME=
 
+# Kafka server credentials
 export KAFKA_TOPIC=
 export KAFKA_SERVER=
 export KAFKA_USER=
 export KAFKA_PASSWORD=
 
-export DATA_FILES_URL=
+# Web service to look up what files are associated with a given MWA observation ID
+export DATA_FILES_URL=http://ws.mwatelescope.org/metadata/data_files
 ```
 
 ### Starting the development stack
@@ -66,20 +74,20 @@ Both the development and production stacks use a different, and overlapping set 
 ### Development
 The development stack includes extra services to facilitate local development and testing. Including an instance of Kafka (which requires Zookeeper) and PG Admin for administration of the included Postgres database.
 
-- API Server
+- API Server (staging/staged.py)
 - Postgres Database
 - PG Admin
 - NGINX
 - Zookeeper
 - Kafka
-- kafkad
+- kafkad (staging/kafkad.py)
 - HA Proxy
 
 ### Production
-- API Server
+- API Server (staging/staged.py)
 - Postgres Database
 - NGINX
-- kafkad
+- kafkad (staging/kafkad.py)
 - HA Proxy
 
 ## Each of the services explained
