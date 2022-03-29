@@ -1,4 +1,4 @@
-#MWA Staging
+# MWA Staging
 
 Software for staging MWA Telescope data from tape and onto disk where it can be later copied off.
 
@@ -17,12 +17,12 @@ It will then send a request to the Banksia API to ask it to stage the requested 
 
 As files are being copied off of tape and onto cache, Banksia will publish messages to a Kafka message bus. The kafkad service connects to Kafka on boot, and as messages come through, it will mark each file as being staged. A separate thread in the kafkad service continuously monitors the database and checks if all of the files for a particular request are "done" and if so, it will send a request to the specified callback URL notifying it of this.
 
-##Installation
+## Installation
 - Download the repository
 - Set environment variables
 - Bring up the stack
 
-###Environment Variables
+### Environment Variables
 We make use of environment variables to store configuration information. A template containing the required variables is included below. We recommend using [direnv](https://direnv.net/) to manage this config.
 ```bash
 export SCOUT_API_USER=
@@ -48,22 +48,22 @@ export KAFKA_PASSWORD=
 export DATA_FILES_URL=
 ```
 
-###Starting the development stack
+### Starting the development stack
 Once the config info has been set, use the docker-compose.yml file to bring up the development stack.
 ```bash
 docker-compose up
 ```
 
-###Starting the production stack
+###S tarting the production stack
 Once the config info has been set, use the docker-compose-prod.yml file to bring up the development stack.
 ```bash
 docker-compose -f docker-compose-prod.yml up --detach
 ```
 
-##Services included with each stack
+## Services included with each stack
 Both the development and production stacks use a different, and overlapping set of services, which are listed below.
 
-###Development
+### Development
 The development stack includes extra services to facilitate local development and testing. Including an instance of Kafka (which requires Zookeeper) and PG Admin for administration of the included Postgres database.
 
 - API Server
@@ -75,29 +75,29 @@ The development stack includes extra services to facilitate local development an
 - kafkad
 - HA Proxy
 
-###Production
+### Production
 - API Server
 - Postgres Database
 - NGINX
 - kafkad
 - HA Proxy
 
-##Each of the services explained
+## Each of the services explained
 
-###API Server
+###A PI Server
 As mentioned above, users of this staging service interact with it by sending web requests. Once you have the local stack running, visit (http://localhost:8080/docs). This page is generated automatically by FastAPI and includes comprehensive documentation of each of the endpoints and methods provided by the FastAPI service. It also allows you to send test requests and view their output.
 
-###Postgres & PG Admin
+### Postgres & PG Admin
 We make use of a local postgres server to store records related to staging jobs and their associated files. You can view the table definitions in ./postgres/tabledefs.sql. Once your stack is running, you can visit http://localhost:5050 to access the locally running PG Admin, which will provide a UI to view and interact with the database. 
 
-###NGINX
+### NGINX
 We use NGINX as a reverse proxy, which will direct traffic to the various services.
 
-###Kafka & ZooKeeper
+### Kafka & ZooKeeper
 To facilitate local development, the development stack inludes an instance of Kafka (for which Zookeeper is required) which will allow you to manually send staging messages and verify that they are being read and associated rows being marked correctly. This has not been well tested, and you may need to refer to the [docs](https://hub.docker.com/r/wurstmeister/kafka) for the Kafka container to configure this properly.
 
-###HA Proxy
+### HA Proxy
 This is included in the development stack in order to mirror a production environment as closely as possible. As mentioned above, in the production Banksia system, there are 6 so called "vss" nodes which are running the API. We therefore use HA Proxy on the client side to load balance requests between each of these nodes. This will handle round-robin between servers, and auto-retries if one of them is down.
 
-###Kafkad
+### Kafkad
 As files are being copied off of tape and onto cache, Banksia will publish messages to a Kafka message bus. The kafkad service connects to Kafka on boot, and as messages come through, it will mark each file as being staged. A separate thread in the kafkad service continuously monitors the database and checks if all of the files for a particular request are "done" and if so, it will send a request to the specified callback URL notifying it of this.
