@@ -84,7 +84,7 @@ The development stack includes extra services to facilitate local development an
 
 ## Each of the services explained
 
-###A PI Server
+### API Server
 As mentioned above, users of this staging service interact with it by sending web requests. Once you have the local stack running, visit (http://localhost:8080/docs). This page is generated automatically by FastAPI and includes comprehensive documentation of each of the endpoints and methods provided by the FastAPI service. It also allows you to send test requests and view their output.
 
 ### Postgres & PG Admin
