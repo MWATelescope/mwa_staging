@@ -54,7 +54,7 @@ Once the config info has been set, use the docker-compose.yml file to bring up t
 docker-compose up
 ```
 
-###S tarting the production stack
+### Starting the production stack
 Once the config info has been set, use the docker-compose-prod.yml file to bring up the development stack.
 ```bash
 docker-compose -f docker-compose-prod.yml up --detach
