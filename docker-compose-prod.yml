@@ -22,6 +22,7 @@ services:
       DBNAME: ${DBNAME}
     volumes:
       - ./staging:/usr/src/app
+      - /var/log
   db:
     user: postgres
     build:
@@ -79,6 +80,7 @@ services:
       DBNAME: ${DBNAME}
     volumes:
       - ./staging:/usr/src/app
+      - /var/log
   haproxy:
     build:
       dockerfile: Dockerfile

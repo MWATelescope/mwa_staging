@@ -10,10 +10,12 @@ from datetime import timezone
 import os
 from typing import Optional
 import logging
+from logging import handlers
 import traceback
 
 from fastapi import FastAPI, BackgroundTasks, Query, Request, Response, status
 import psycopg2
+from psycopg2 import pool
 from psycopg2 import extras
 from pydantic import BaseModel
 import requests
@@ -23,17 +25,28 @@ from urllib3.exceptions import InsecureRequestWarning
 from mwa_files import MWAObservation as Observation
 from mwa_files import get_mwa_files as get_files
 
+MINCONN = 2          # Start with this many database connections
+MAXCONN = 10         # Don't ever create more than this many
+
+DBPOOL = pool.ThreadedConnectionPool(0, 0)    # Will be a real, connected psycopg2 database connection pool object after startup
+
 # noinspection PyUnresolvedReferences
 requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
 
-# logging.basicConfig(level=logging.DEBUG, format='[%(asctime)s %(levelname)s] %(message)s')
-
-LOGLEVEL = logging.DEBUG
+LOGLEVEL_LOGFILE = logging.DEBUG   # All messages will be sent to the log file
+LOGLEVEL_CONSOLE = logging.INFO    # INFO and above will be printed to STDOUT as well as the logfile
+LOGFILE = "/var/log/staging/staged.log"
 
 LOGGER = logging.getLogger('staged')
-LOGGER.setLevel(LOGLEVEL)
+LOGGER.setLevel(logging.DEBUG)     # Overridden by the log levels in the file and console handler, if they are less permissive
+
+fh = handlers.RotatingFileHandler(LOGFILE, maxBytes=100000000, backupCount=5)  # 100 Mb per file, max of five old log files
+fh.setLevel(LOGLEVEL_LOGFILE)
+fh.setFormatter(logging.Formatter(fmt='[%(asctime)s %(levelname)s] %(message)s'))
+LOGGER.addHandler(fh)
+
 ch = logging.StreamHandler()
-ch.setLevel(LOGLEVEL)
+ch.setLevel(LOGLEVEL_CONSOLE)
 ch.setFormatter(logging.Formatter(fmt='[%(asctime)s %(levelname)s] %(message)s'))
 LOGGER.addHandler(ch)
 
@@ -61,11 +74,6 @@ class ApiConfig():
 config = ApiConfig()
 
 SCOUT_API_TOKEN = ''
-
-DB = psycopg2.connect(user=config.DBUSER,
-                      password=config.DBPASSWORD,
-                      host=config.DBHOST,
-                      database=config.DBNAME)
 
 CREATE_JOB = """
 INSERT INTO staging_jobs (job_id, notify_url, created, completed, total_files, notified, checked)
@@ -331,6 +339,23 @@ class ScoutAuth(AuthBase):
 ########################################################################
 # Utility functions
 
+def initdb(minconn=MINCONN, maxconn=MAXCONN):
+    """
+    Initialise a connection pool to the database.
+
+    :param minconn: Minimum number of connections. Open this many at startup, and close connections down to this many
+                    as they are returned.
+    :param maxconn: Maximum number of connections to open - getconn() will fail if this many are already open.
+    :return: None
+    """
+    dbpool = pool.ThreadedConnectionPool(minconn=minconn,
+                                         maxconn=maxconn,
+                                         host=config.DBHOST,
+                                         user=config.DBUSER,
+                                         database=config.DBNAME,
+                                         password=config.DBPASSWORD)
+    return dbpool
+
 
 def get_scout_token(refresh: bool = False):
     """
@@ -349,7 +374,7 @@ def get_scout_token(refresh: bool = False):
         result = requests.post(config.SCOUT_LOGIN_URL, json=data, verify=False)
         if result.status_code == 200:
             SCOUT_API_TOKEN = result.json()['response']
-            LOGGER.debug('Got new token: %s' % SCOUT_API_TOKEN)
+            LOGGER.debug('Got new Scout token.')
             return SCOUT_API_TOKEN
         else:
             LOGGER.error('Failed to get Scout token: %d:%s' % (result.status_code, result.text))
@@ -381,22 +406,22 @@ def send_result(notify_url,
             'error_files':error_files,
             'comment':comment}
     try:
-        LOGGER.debug('Sending notification to %s(%s,%s): %s' % (notify_url, config.RESULT_USERNAME, config.RESULT_PASSWORD, data))
+        LOGGER.debug('Sending notification for job %d to %s(%s): %s' % (job_id, notify_url, config.RESULT_USERNAME, data))
         result = requests.post(notify_url, json=data, verify=False, auth=(config.RESULT_USERNAME, config.RESULT_PASSWORD))
     except requests.Timeout:
-        LOGGER.error('Timout calling notify_url: %s' % notify_url)
+        LOGGER.error('Timout for job %d calling notify_url: %s' % (job_id, notify_url))
         return None
     except requests.RequestException:
-        LOGGER.error('Exception calling notify_url %s: %s' % (notify_url, traceback.format_exc()))
+        LOGGER.error('Exception for job %d calling notify_url %s: %s' % (job_id, notify_url, traceback.format_exc()))
         return
 
     if result.status_code != 200:
-        LOGGER.error('Error %d returned when calling notify_url: %s' % (result.status_code, result.text))
+        LOGGER.error('Error %d returned for job %d when calling notify_url: %s' % (result.status_code, job_id, result.text))
     else:
         return True
 
 
-def create_job(job: NewJob):
+def create_job(job: NewJob, db=None):
     """
     Carries out the actual job of finding out what files are to include in the job, asking Scout to stage those
     files, and creating the new job record in the database. Runs in the background after the new_job endpoint
@@ -414,6 +439,7 @@ def create_job(job: NewJob):
         JOB_CREATION_EXCEPTION
 
     :param job: An instance of the NewJob() class.
+    :param db: A Postgres daatabse connection instance
     :return: None - runs in the background after the new_job endpoint has already returned.
     """
     pathlist = []
@@ -434,33 +460,34 @@ def create_job(job: NewJob):
                     comment='No files to stage.')
     else:
         try:
-            with DB:
+            with db:
                 data = {'path': pathlist, 'copy': 0, 'inode': [], 'key':str(job.job_id), 'topic':config.KAFKA_TOPIC}
                 result = requests.put(config.SCOUT_STAGE_URL, json=data, auth=ScoutAuth(get_scout_token()), verify=False)
-                LOGGER.debug('First staging call: %d:%s' % (result.status_code, result.text))
                 if result.status_code == 403:
                     result = requests.put(config.SCOUT_STAGE_URL, json=data, auth=ScoutAuth(get_scout_token(refresh=True)), verify=False)
-                    LOGGER.debug('Second staging call: %d:%s' % (result.status_code, result.text))
-
-                # LOGGER.debug('Got result from Scout API batchstage call: %d:%s' % (result.status_code, result.text))
+                LOGGER.debug('Got result for job %d from Scout API batchstage call: %d:%s' % (job.job_id, result.status_code, result.text))
 
                 if result.status_code == 200:   # All files requested to be staged
-                    with DB.cursor() as curs:
+                    with db.cursor() as curs:
                         curs.execute(CREATE_JOB, (job.job_id,  # job_id
                                                   job.notify_url,  # URL to call on success/failure
                                                   datetime.datetime.now(timezone.utc),  # created
                                                   len(pathlist)))  # total_files
                         psycopg2.extras.execute_values(curs, WRITE_FILES, [(job.job_id, f, False, False) for f in pathlist])
+                        LOGGER.info('Job %d created.' % job.job_id)
                 else:
                     send_result(notify_url=job.notify_url,
                                 job_id=job.job_id,
                                 return_code=JOB_SCOUT_CALL_FAILED,
                                 comment='Scout API returned an error: %s' % result.text)
+                    LOGGER.info('Job %d NOT created, Scout call failed: %s' % (job.job_id, result.text))
         except:
+            exc_str = traceback.format_exc()
             send_result(notify_url=job.notify_url,
                         job_id=job.job_id,
                         return_code=JOB_CREATION_EXCEPTION,
-                        comment='Exception during job creation: %s' % traceback.format_exc())
+                        comment='Exception while trying to create job %d: %s' % (job.job_id, exc_str))
+            LOGGER.error('Exception while trying to create job %d: %s' % (job.job_id, exc_str))
 
 
 ###############################################################################
@@ -470,10 +497,29 @@ def create_job(job: NewJob):
 app = FastAPI()
 
 
+@app.on_event("startup")
+async def startup():
+    """Run on FastAPI startup, to create a Postgres connection pool.
+    """
+    global DBPOOL
+    DBPOOL = initdb(MINCONN, MAXCONN)
+
+
+@app.on_event("shutdown")
+async def startup():
+    """Run on FastAPI startup, to create a Postgres connection pool.
+    """
+    global DBPOOL
+    DBPOOL.closeall()
+
+
 @app.post("/staging/",
           status_code=status.HTTP_202_ACCEPTED,
           responses={403:{'model':ErrorResult}, 500:{'model':ErrorResult}, 502:{'model':ErrorResult}})
-@app.post("/staging", include_in_schema=False)
+@app.post("/staging",
+          include_in_schema=False,
+          status_code=status.HTTP_202_ACCEPTED,
+          responses={403:{'model': ErrorResult}, 500:{'model': ErrorResult}, 502:{'model': ErrorResult}})
 async def new_job(job: NewJob, background_tasks: BackgroundTasks, response:Response):
     """
     POST API to create a new staging job. Accepts a JSON dictionary defined above by the Job() class,
@@ -496,9 +542,10 @@ async def new_job(job: NewJob, background_tasks: BackgroundTasks, response:Respo
     :param response: An instance of fastapi.Response(), used to set the status code returned
     :return: None
     """
+    db = DBPOOL.getconn()
     try:
-        with DB:
-            with DB.cursor() as curs:
+        with db:
+            with db.cursor() as curs:
                 curs.execute('SELECT count(*) FROM staging_jobs WHERE job_id = %s' % (job.job_id,))
                 if curs.fetchone()[0] > 0:
                     response.status_code = status.HTTP_403_FORBIDDEN
@@ -506,25 +553,31 @@ async def new_job(job: NewJob, background_tasks: BackgroundTasks, response:Respo
                     return ErrorResult(errormsg=err_msg)
 
         if (not job.files) and (not job.obs):
-            err_msg = "Must specify either an observation, or a list of files"
+            err_msg = "Error for job %d: Must specify either an observation, or a list of files" % job.job_id
             response.status_code = status.HTTP_400_BAD_REQUEST
             LOGGER.error(err_msg)
             return ErrorResult(errormsg=err_msg)
 
-        background_tasks.add_task(create_job, job=job)
+        background_tasks.add_task(create_job, job=job, db=db)
         return
 
     except Exception:  # Any other errors
         response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
         exc_str = traceback.format_exc()
-        LOGGER.error(exc_str)
-        return ErrorResult(errormsg='Exception creating staging job %d: %s' % (job.job_id, exc_str))
+        LOGGER.error("Exception creating job %d: %s" % (job.job_id, exc_str))
+        return ErrorResult(errormsg='Exception creating job %d: %s' % (job.job_id, exc_str))
+
+    finally:   # Return the DB connection
+        DBPOOL.putconn(db)
 
 
 @app.get("/staging/",
          status_code=status.HTTP_200_OK,
          responses={200:{'model':JobStatus}, 404:{'model':ErrorResult}, 500:{'model':ErrorResult}})
-@app.get("/staging", include_in_schema=False)
+@app.get("/staging",
+         include_in_schema=False,
+         status_code=status.HTTP_200_OK,
+         responses={200:{'model':JobStatus}, 404:{'model':ErrorResult}, 500:{'model':ErrorResult}})
 def read_status(job_id: int, response:Response, include_files: bool = False):
     """
     GET API to read status details about an existing staging job. Accepts job_id and (optional) include_files
@@ -537,9 +590,10 @@ def read_status(job_id: int, response:Response, include_files: bool = False):
     :param response:        An instance of fastapi.Response(), used to set the status code returned
     :return:                JSON dict as defined by the JobStatus() class above
     """
+    db = DBPOOL.getconn()
     try:
-        with DB:
-            with DB.cursor() as curs:
+        with db:
+            with db.cursor() as curs:
                 curs.execute(QUERY_JOB, (job_id,))
                 rows = curs.fetchall()
                 if not rows:   # Job ID not found
@@ -571,21 +625,28 @@ def read_status(job_id: int, response:Response, include_files: bool = False):
                                    notified=notified,
                                    total_files=total_files,
                                    ready_files=ready_files,
-                                   error_files=error_files,
-                                   files=files)
+                                   error_files=error_files)
                 LOGGER.info("Job %d STATUS: %s" % (job_id, result))
+                result.files = files
+                LOGGER.debug("Job %d file status: %s" % (job_id, files))
                 return result
     except Exception:
         response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
         exc_str = traceback.format_exc()
-        LOGGER.error(exc_str)
-        return ErrorResult(errormsg='Exception staging job %d: %s' % (job_id, exc_str))
+        LOGGER.error('Exception getting status for job %d: %s' % (job_id, exc_str))
+        return ErrorResult(errormsg='Exception getting status for job %d: %s' % (job_id, exc_str))
+
+    finally:   # Return the DB connection
+        DBPOOL.putconn(db)
 
 
 @app.delete("/staging/",
             status_code=status.HTTP_200_OK,
             responses={404:{'model':ErrorResult}, 500:{'model':ErrorResult}})
-@app.delete("/staging", include_in_schema=False)
+@app.delete("/staging",
+            include_in_schema=False,
+            status_code=status.HTTP_200_OK,
+            responses={404:{'model':ErrorResult}, 500:{'model':ErrorResult}})
 def delete_job(job_id: int, response:Response):
     """
     POST API to delete a staging job. Accepts an integer job_id value, to be deleted.
@@ -594,9 +655,10 @@ def delete_job(job_id: int, response:Response):
     :param response:  # An instance of fastapi.Response(), used to set the status code returned
     :return: None
     """
+    db = DBPOOL.getconn()
     try:
-        with DB:
-            with DB.cursor() as curs:
+        with db:
+            with db.cursor() as curs:
                 curs.execute(DELETE_JOB % (job_id,))
                 if curs.rowcount == 0:
                     response.status_code = status.HTTP_404_NOT_FOUND
@@ -607,8 +669,11 @@ def delete_job(job_id: int, response:Response):
     except Exception:  # Any other errors
         response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
         exc_str = traceback.format_exc()
-        LOGGER.error(exc_str)
-        return ErrorResult(errormsg='Exception staging job %d: %s' % (job_id, exc_str))
+        LOGGER.error('Exception deleting job %d: %s' % (job_id, exc_str))
+        return ErrorResult(errormsg='Exception deleting job %d: %s' % (job_id, exc_str))
+
+    finally:   # Return the DB connection
+        DBPOOL.putconn(db)
 
 
 @app.get("/ping/")
@@ -620,13 +685,17 @@ def ping():
     \f
     :return: None
     """
+    LOGGER.info('Ping called.')
     return
 
 
 @app.get("/get_stats/",
          status_code=status.HTTP_200_OK,
          responses={200:{'model':GlobalStatistics}, 500:{'model':ErrorResult}})
-@app.get("/get_stats", include_in_schema=False)
+@app.get("/get_stats",
+         include_in_schema=False,
+         status_code=status.HTTP_200_OK,
+         responses={200:{'model':GlobalStatistics}, 500:{'model':ErrorResult}})
 def get_stats(response:Response):
     """
     GET API to return an overall job and file statistics for this process (the staging web server)
@@ -635,9 +704,10 @@ def get_stats(response:Response):
     :param response:        An instance of fastapi.Response(), used to set the status code returned
     :return: GlobalStatus object
     """
+    db = DBPOOL.getconn()
     try:
-        with DB:
-            with DB.cursor() as curs:
+        with db:
+            with db.cursor() as curs:
                 curs.execute("SELECT update_time, last_message, kafka_alive FROM kafkad_heartbeat")
                 kafkad_heartbeat, last_message, kafka_alive = curs.fetchall()[0]
                 curs.execute("SELECT count(*) FROM staging_jobs WHERE completed")
@@ -668,18 +738,25 @@ def get_stats(response:Response):
                                   ready_files=ready_files,
                                   error_files=error_files,
                                   waiting_files=waiting_files)
+        LOGGER.info('Called get_stats.')
         return result
     except Exception:
         response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
         exc_str = traceback.format_exc()
-        LOGGER.error(exc_str)
-        return ErrorResult(errormsg='Exception getting status: %s' % (exc_str,))
+        LOGGER.error('Exception getting staging system status: %s' % (exc_str,))
+        return ErrorResult(errormsg='Exception getting staging system status: %s' % (exc_str,))
+
+    finally:   # Return the DB connection
+        DBPOOL.putconn(db)
 
 
 @app.get("/get_joblist/",
          status_code=status.HTTP_200_OK,
          responses={200:{'model':JobList}, 500:{'model':ErrorResult}})
-@app.get("/get_joblist", include_in_schema=False)
+@app.get("/get_joblist",
+         include_in_schema=False,
+         status_code=status.HTTP_200_OK,
+         responses={200:{'model':JobList}, 500:{'model':ErrorResult}})
 def get_joblist(response:Response):
     """
     GET API to return a list of all jobs, giving the number of staged files, the total number of files, and the
@@ -688,10 +765,11 @@ def get_joblist(response:Response):
     :param response:        An instance of fastapi.Response(), used to set the status code returned
     :return: JobList object
     """
+    db = DBPOOL.getconn()
     try:
         result = JobList()
-        with DB:
-            with DB.cursor() as curs:
+        with db:
+            with db.cursor() as curs:
                 curs.execute(LIST_JOBS)
                 for row in curs.fetchall():
                     job_id, staged_files, total_files, completed = row
@@ -701,14 +779,26 @@ def get_joblist(response:Response):
     except Exception:
         response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
         exc_str = traceback.format_exc()
-        LOGGER.error(exc_str)
-        return ErrorResult(errormsg='Exception getting status: %s' % (exc_str,))
+        LOGGER.error('Exception getting staging job list: %s' % (exc_str,))
+        return ErrorResult(errormsg='Exception getting staging job list: %s' % (exc_str,))
 
+    finally:   # Return the DB connection
+        DBPOOL.putconn(db)
+
+
+########################################################################################################
+#
+#    Dummy endpoints, emulating the Scout API for testing.
+#
+########################################################################################################
 
 @app.post("/v1/security/login/",
           status_code=status.HTTP_200_OK,
           response_model=ScoutLoginResponse)
-@app.post("/v1/security/login", include_in_schema=False)
+@app.post("/v1/security/login",
+          include_in_schema=False,
+          status_code=status.HTTP_200_OK,
+          response_model=ScoutLoginResponse)
 def dummy_scout_login(account: ScoutLogin, response:Response):
     """
     Emulate Scout API for development. Takes an account name and password, returns a token string.
@@ -717,16 +807,19 @@ def dummy_scout_login(account: ScoutLogin, response:Response):
     :return: Token string in a dict, with key 'response'
     """
     if (account.acct == config.SCOUT_API_USER) and (account.passwd == config.SCOUT_API_PASSWORD):
+        LOGGER.info('Pretending be Scout: /v1/security/login passed, returning token')
         return ScoutLoginResponse(response=DUMMY_TOKEN)
     else:
-        LOGGER.error('Bad username/password.')
+        LOGGER.error('Pretending be Scout: /v1/security/login failed, Bad username/password')
         response.status_code = 401
         return
 
 
 @app.post("/v1/request/batchstage/",
           status_code=status.HTTP_200_OK)
-@app.post("/v1/request/batchstage", include_in_schema=False)
+@app.post("/v1/request/batchstage",
+          include_in_schema=False,
+          status_code=status.HTTP_200_OK)
 def dummy_scout_stage(stagedata: StageFiles, request:Request, response:Response):
     """
     Emulate Scout's staging server for development. 'Stages' the files passed in the list of filenames.
@@ -739,16 +832,19 @@ def dummy_scout_stage(stagedata: StageFiles, request:Request, response:Response)
     :return: None
     """
     if request.headers['Authorization'] == 'Bearer %s' % DUMMY_TOKEN:
-        LOGGER.info("Pretending be Scout: Staging: %s" % (stagedata.path,))
+        LOGGER.info("Pretending be Scout: /v1/request/batchstage succeeded: %s" % (stagedata.path,))
     else:
-        LOGGER.error("Pretending to be Scout - bad Authorization header: %s" % request.headers['Authorization'])
+        LOGGER.error("Pretending to be Scout: /v1/request/batchstage failed: bad Authorization header: %s" % request.headers['Authorization'])
         response.status_code = 403
 
 
 @app.get("/v1/file/",
          status_code=status.HTTP_200_OK,
          response_model=ScoutFileStatus)
-@app.get("/v1/file", include_in_schema=False)
+@app.get("/v1/file",
+         include_in_schema=False,
+         status_code=status.HTTP_200_OK,
+         response_model=ScoutFileStatus)
 def dummy_scout_status(request:Request, response:Response, path: str = Query(...)):
     """
     Emulate Scout's staging server for development. Returns a status structure for the given (single) file.
@@ -768,16 +864,24 @@ def dummy_scout_status(request:Request, response:Response, path: str = Query(...
             resp.offlineblocks = 1
         else:
             resp.offlineblocks = 0
-        LOGGER.info("Pretending be Scout: Returning status for %s" % (path,))
+        LOGGER.info("Pretending be Scout: /v1/file succeeded for %s" % (path,))
         return resp
     else:
-        LOGGER.error("Pretending to be Scout - bad Authorization header: %s" % request.headers['Authorization'])
+        LOGGER.error("Pretending to be Scout: /v1/file succeeded: bad Authorization header: %s" % request.headers['Authorization'])
         response.status_code = 403
 
 
+########################################################################################################
+#
+#    Dummy endpoint, emulating ASVO to use as a notify_url endpoint for testing
+#
+########################################################################################################
+
 @app.post("/jobresult/",
           status_code=status.HTTP_200_OK)
-@app.post("/jobresult", include_in_schema=False)
+@app.post("/jobresult",
+          include_in_schema=False,
+          status_code=status.HTTP_200_OK)
 def dummy_asvo(result: JobResult):
     """
     Emulate ASVO server for development. Used to pass a job result back to ASVO, when all files are staged, or when
@@ -789,5 +893,3 @@ def dummy_asvo(result: JobResult):
     :return: None
     """
     LOGGER.info("Pretending to be ASVO: Job result received: %s" % (result,))
-
-
