@@ -77,6 +77,8 @@ def get_mwa_files(obs: MWAObservation):
                 folder = ''
             if filename is None:
                 continue
+            if folder.startswith('/'):
+                folder = folder[1:]
             pathlist.append(os.path.join('mwa', bucket, folder, filename))
         return pathlist
     elif result.status_code == 404:

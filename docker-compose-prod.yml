@@ -81,11 +81,11 @@ services:
       - ./staging:/usr/src/app
   haproxy:
     build:
-      dockerfile: Dockerfile.dev
+      dockerfile: Dockerfile
       context: ./haproxy
     restart: always
     ports:
-      - '8081:8081'
+      - '8080:8080'
     volumes:
       - ./config:/etc/pawsey-tls/latest/haproxy/
 volumes:
