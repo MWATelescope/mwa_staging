@@ -8,28 +8,22 @@ This file implements the REST API for accepting requests from ASVO, and another 
 import datetime
 from datetime import timezone
 import os
-from typing import Optional
 import logging
 from logging import handlers
 import traceback
-from threading import Semaphore
+
+import psycopg2
+from psycopg2 import extras
 
 from fastapi import FastAPI, BackgroundTasks, Query, Request, Response, status
-import psycopg2
-from psycopg2 import pool
-from psycopg2 import extras
-from pydantic import BaseModel
 import requests
 from requests.auth import AuthBase
 from urllib3.exceptions import InsecureRequestWarning
 
-from mwa_files import MWAObservation as Observation
 from mwa_files import get_mwa_files as get_files
+import staged_models as models
+import staged_db
 
-MINCONN = 2          # Start with this many database connections
-MAXCONN = 100         # Don't ever create more than this many
-
-DBPOOL = pool.ThreadedConnectionPool(0, 0)    # Will be a real, connected psycopg2 database connection pool object after startup
 
 # noinspection PyUnresolvedReferences
 requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
@@ -76,47 +70,6 @@ config = ApiConfig()
 
 SCOUT_API_TOKEN = ''
 
-CREATE_JOB = """
-INSERT INTO staging_jobs (job_id, notify_url, created, completed, total_files, notified, checked)
-VALUES (%s, %s, %s, false, %s, false, false)
-"""
-
-DELETE_JOB = """
-DELETE FROM staging_jobs
-WHERE job_id = %s
-"""
-
-WRITE_FILES = """
-INSERT INTO files (job_id, filename, ready, error) 
-VALUES %s
-"""
-
-DELETE_FILES = """
-DELETE FROM files
-WHERE job_id = %s
-"""
-
-QUERY_JOB = """
-SELECT extract(epoch from created), completed, notified, total_files
-FROM staging_jobs
-WHERE job_id = %s
-"""
-
-LIST_JOBS = """
-SELECT sj.job_id, 
-       (SELECT count(*) FROM files WHERE files.job_id=sj.job_id AND ready) as staged_files, 
-       sj.total_files, 
-       sj.completed 
-FROM staging_jobs as sj
-ORDER BY sj.job_id;
-"""
-
-QUERY_FILES = """
-SELECT filename, ready, error, extract(epoch from readytime)
-FROM files
-WHERE job_id = %s
-"""
-
 # Job return codes:
 
 JOB_SUCCESS = 0                 # All files staged successfully
@@ -128,186 +81,6 @@ JOB_SCOUT_FILE_NOT_FOUND = 103  # One or more of the files requested for staging
 JOB_CREATION_EXCEPTION = 199    # An exception occurred while creating the job. Comment field will contain exception traceback
 
 DUMMY_TOKEN = "This is a real token, honest!"    # Used by the dummy Scout API endpoints
-
-
-#####################################################################
-# Pydantic models defining FastAPI parameters or responses
-#
-
-
-class NewJob(BaseModel):
-    """
-    Used by the 'new job' endpoint to pass in the job ID and either a list of files, or a telescope specific structure
-    defining an observation, where all files that are part of that observation should be staged.
-
-    job_id:      Integer staging job ID\n
-    files:       A list of filenames, including full paths\n
-    obs:         Telescope-specific structure defining an observation whose files you want staged\n
-    """
-    job_id: int                       # Integer staging job ID
-    files: Optional[list[str]] = []   # A list of filenames, including full paths
-    notify_url: str                   # URL to call to notify the client about job failure or success
-    obs: Optional[Observation] = {}   # A telescope-specific structure defining an observation whose files you want staged
-
-
-class JobResult(BaseModel):
-    """
-    Used by the dummy ASVO server endpoint to pass in the results of a job once all files are staged.
-
-    job_id Integer job ID\n
-    return_code: Integer error code, eg JOB_SUCCESS=0\n
-    total_files: Total number of files in job\n
-    ready_files: Number of files successfully staged\n
-    error_files: Number of files where Kafka returned an error\n
-    comment: Human readable string (eg error message)\n
-    """
-    job_id: int      # Integer staging job ID
-    return_code: int  # Integer error code, eg JOB_SUCCESS=0
-    total_files: int   # Total number of files in job
-    ready_files: int   # Number of files successfully staged
-    error_files: int   # Number of files where Kafka returned an error
-    comment: str     # Human readable string (eg error message)
-
-
-class StageFiles(BaseModel):
-    """
-    Used by the dummy ASVO server endpoint to pretend to stage jobs.
-    """
-    path: Optional[list[str]] = Query(None)
-    copyint: int = Query(0, alias='copy')
-    inode: Optional[list[int]] = Query(None)
-
-
-class JobStatus(BaseModel):
-    """
-    Used by the 'read status' endpoint to return the status of a single job.
-
-    job_id:       Integer ASVO job ID\n
-    created:      Integer unix timestamp when the job was created\n
-    completed:    True if all files have been staged\n
-    total_files:  Total number of files in this job\n
-    ready_files: Number of files successfully staged\n
-    error_files: Number of files where Kafka returned an error\n
-    files:        key is filename, value is tuple(bool, bool, int), which contains (ready, error, readytime)\n
-
-    The files attribute is a list of (ready:bool, readytime:int) tuples where ready_time is the time when that file
-    was staged (or None)
-    """
-    job_id: int       # Integer staging job ID
-    created: Optional[int] = None      # Integer unix timestamp when the job was created
-    completed: Optional[bool] = None   # True if all files have been staged
-    total_files: Optional[int] = None  # Total number of files in this job
-    ready_files: Optional[int] = None   # Number of files successfully staged
-    error_files: Optional[int] = None   # Number of files where Kafka returned an error
-    # The files attribute is a list of (ready:bool, error:bool, readytime:int) tuples where ready_time
-    # is the time when that file was staged or returned an error (or None if neither has happened yet)
-    files: dict[str, tuple] = {"":(False, False, 0)}     # Specifying the tuple type as tuple(bool, int) crashes the FastAPI doc generator
-
-
-class GlobalStatistics(BaseModel):
-    """
-    Used by the 'get stats' endpoint to return the kafka/kafkad/staged status and health data.
-
-    kafkad_heartbeat:   Timestamp when kafkad.py last updated its status table\n
-    kafka_alive: bool   Is the remote kafka daemon alive?\n
-    last_message:       Timestamp when the last valid file status message was received\n
-    completed_jobs:     Total number of jobs with all files staged\n
-    incomplete_jobs:    Number of jobs waiting for files to be staged\n
-    ready_files: i      Total number of files staged so far\n
-    unready_files:      Number of files we are waiting to be staged\n
-    """
-    kafkad_heartbeat: Optional[float]  # Timestamp when kafkad.py last updated its status table
-    kafka_alive: bool = False          # Is the remote kafka daemon alive?
-    last_message: Optional[float]      # Timestamp when the last valid file status message was received
-    completed_jobs: int = 0            # Total number of jobs with all files staged
-    incomplete_jobs: int = 0           # Number of jobs waiting for files to be staged
-    ready_files: int = 0               # Total number of files staged successfully so far
-    error_files: int = 0               # Number of files for which Kafka reported an error
-    waiting_files: int = 0             # Number of files we have still waiting to be staged
-
-
-class JobList(BaseModel):
-    """
-    Used by the 'list all jobs' endoint to return a list of all jobs.
-
-    jobs:   Key is job ID, value is (staged_files, total_files, completed)
-    """
-    jobs: dict[int, tuple] = {}  # Key is job ID, value is (staged_files, total_files, completed)
-
-
-class ErrorResult(BaseModel):
-    """
-    Used by all jobs, to return an error message if the call failed.
-
-    errormsg:  Error message returned to caller
-    """
-    errormsg: str   # Error message returned to caller
-
-
-class ScoutFileStatus(BaseModel):
-    """
-    Used by the Scout API dummy status endpoint, to return the status of a single file.
-
-    archdone:        All copies complete, file exists on tape (possibly on disk as well)\n
-    path:            First file name for file, for policy decisions, eg "/object.dat.0"\n
-    size:            File size in bytes, eg "10485760"\n
-    inode:           File inode number, eg "2"\n
-    uid:             User ID for file, eg "0"\n
-    username:        User name for file, eg "root"\n
-    gid:             group ID for file, eg "0"\n
-    groupname:       group name for file, eg "root"\n
-    mode:            file mode, eg 33188\n
-    modestring:      file mode string, eg "-rw-r--r--"\n
-    nlink:           number of links to file, eg 1\n
-    atime:           access time, eg "1618411999"\n
-    mtime:           modify time, eg "1618411968"\n
-    ctime:           attribute change time, eg "1618415117"\n
-    rtime:           residence time, eg "1618415102"\n
-    version:         Data version, eg "2560"\n
-    onlineblocks:    Number of online blocks, eg "2560"\n
-    offlineblocks:   Number of offline blocks, eg "0"\n
-    flags:           archive flags, eg "0"\n
-    flagsstring:     archive flags string, eg ""\n
-    uuid:            UUID for file, eg "8e9825f9-291d-415e-bb1f-38d8f865dcac"\n
-    copies:          Complex sub-structure that we'll ignore for this dummy service
-    """
-    archdone: bool = True     # All copies complete, file exists on tape (possibly on disk as well)
-    path: str                 # First file name for file, for policy decisions, eg "/object.dat.0"
-    size: int = 0             # File size in bytes, eg "10485760"
-    inode: int = 0            # File inode number, eg "2"
-    uid: int = 0              # User ID for file, eg "0"
-    username: str = ""        # User name for file, eg "root"
-    gid: int = 0              # group ID for file, eg "0"
-    groupname: str = ""       # group name for file, eg "root"
-    mode: int = 0             # file mode, eg 33188
-    modestring: str = ""      # file mode string, eg "-rw-r--r--"
-    nlink: int = 0            # number of links to file, eg 1
-    atime: int = 0            # access time, eg "1618411999"
-    mtime: int = 0            # modify time, eg "1618411968"
-    ctime: int = 0            # attribute change time, eg "1618415117"
-    rtime: int = 0            # residence time, eg "1618415102"
-    version: str = ""         # Data version, eg "2560"
-    onlineblocks: int = 0     # Number of online blocks, eg "2560"
-    offlineblocks: int = 0    # Number of offline blocks, eg "0"
-    flags: int = 0            # archive flags, eg "0"
-    flagsstring: str = ""     # archive flags string, eg ""
-    uuid: str = ""            # UUID for file, eg "8e9825f9-291d-415e-bb1f-38d8f865dcac"
-    copies: list = []         # Complex sub-structure that we'll ignore for this dummy service
-
-
-class ScoutLogin(BaseModel):
-    """
-    Used by the dummy Scout API login endpoint, to pass username/password
-    """
-    acct: str      # Account name
-    passwd: str = Query('', alias='pass')     # Account password
-
-
-class ScoutLoginResponse(BaseModel):
-    """
-    Used by the dummy Scout API login endoint to return the token
-    """
-    response: str    # Token string
 
 
 ###########################################################################
@@ -339,43 +112,6 @@ class ScoutAuth(AuthBase):
 
 ########################################################################
 # Utility functions
-
-class ReallyThreadedConnectionPool(pool.ThreadedConnectionPool):
-    """
-    Block if we exceed the maximum number of connections, instead of throwing an exception.
-
-    From: https://stackoverflow.com/questions/48532301/python-postgres-psycopg2-threadedconnectionpool-exhausted
-    """
-    def __init__(self, minconn, maxconn, *args, **kwargs):
-        self._semaphore = Semaphore(maxconn)
-        super().__init__(minconn, maxconn, *args, **kwargs)
-
-    def getconn(self, *args, **kwargs):
-        self._semaphore.acquire()
-        return super().getconn(*args, **kwargs)
-
-    def putconn(self, *args, **kwargs):
-        super().putconn(*args, **kwargs)
-        self._semaphore.release()
-
-
-def initdb(minconn=MINCONN, maxconn=MAXCONN):
-    """
-    Initialise a connection pool to the database.
-
-    :param minconn: Minimum number of connections. Open this many at startup, and close connections down to this many
-                    as they are returned.
-    :param maxconn: Maximum number of connections to open - getconn() will fail if this many are already open.
-    :return: None
-    """
-    dbpool = ReallyThreadedConnectionPool(minconn=minconn,
-                                          maxconn=maxconn,
-                                          host=config.DBHOST,
-                                          user=config.DBUSER,
-                                          database=config.DBNAME,
-                                          password=config.DBPASSWORD)
-    return dbpool
-
 
 def get_scout_token(refresh: bool = False):
     """
@@ -441,7 +177,7 @@ def send_result(notify_url,
         return True
 
 
-def create_job(job: NewJob):
+def create_job(job: models.NewJob):
     """
     Carries out the actual job of finding out what files are to include in the job, asking Scout to stage those
     files, and creating the new job record in the database. Runs in the background after the new_job endpoint
@@ -478,7 +214,7 @@ def create_job(job: NewJob):
                     return_code=JOB_NO_FILES,
                     comment='No files to stage.')
     else:
-        db = DBPOOL.getconn()
+        db = staged_db.DBPOOL.getconn()
         try:
             with db:
                 data = {'path': pathlist, 'copy': 0, 'inode': [], 'key':str(job.job_id), 'topic':config.KAFKA_TOPIC}
@@ -489,11 +225,11 @@ def create_job(job: NewJob):
 
                 if result.status_code == 200:   # All files requested to be staged
                     with db.cursor() as curs:
-                        curs.execute(CREATE_JOB, (job.job_id,  # job_id
-                                                  job.notify_url,  # URL to call on success/failure
-                                                  datetime.datetime.now(timezone.utc),  # created
-                                                  len(pathlist)))  # total_files
-                        psycopg2.extras.execute_values(curs, WRITE_FILES, [(job.job_id, f, False, False) for f in pathlist])
+                        curs.execute(staged_db.CREATE_JOB, (job.job_id,  # job_id
+                                                            job.notify_url,  # URL to call on success/failure
+                                                            datetime.datetime.now(timezone.utc),  # created
+                                                            len(pathlist)))  # total_files
+                        psycopg2.extras.execute_values(curs, staged_db.WRITE_FILES, [(job.job_id, f, False, False) for f in pathlist])
                         LOGGER.info('Job %d created.' % job.job_id)
                 else:
                     send_result(notify_url=job.notify_url,
@@ -510,7 +246,7 @@ def create_job(job: NewJob):
             LOGGER.error('Exception while trying to create job %d: %s' % (job.job_id, exc_str))
 
         finally:   # Return the DB connection
-            DBPOOL.putconn(db)
+            staged_db.DBPOOL.putconn(db)
 
 
 ###############################################################################
@@ -524,26 +260,24 @@ app = FastAPI()
 async def startup():
     """Run on FastAPI startup, to create a Postgres connection pool.
     """
-    global DBPOOL
-    DBPOOL = initdb(MINCONN, MAXCONN)
+    staged_db.initdb(config)
 
 
 @app.on_event("shutdown")
-async def startup():
-    """Run on FastAPI startup, to create a Postgres connection pool.
+async def shutdown():
+    """Run on FastAPI shutdown, to close all of the connections in the Postgres connection pool.
     """
-    global DBPOOL
-    DBPOOL.closeall()
+    staged_db.DBPOOL.closeall()
 
 
 @app.post("/staging/",
           status_code=status.HTTP_202_ACCEPTED,
-          responses={403:{'model':ErrorResult}, 500:{'model':ErrorResult}, 502:{'model':ErrorResult}})
+          responses={403:{'model':models.ErrorResult}, 500:{'model':models.ErrorResult}, 502:{'model':models.ErrorResult}})
 @app.post("/staging",
           include_in_schema=False,
           status_code=status.HTTP_202_ACCEPTED,
-          responses={403:{'model': ErrorResult}, 500:{'model': ErrorResult}, 502:{'model': ErrorResult}})
-async def new_job(job: NewJob, background_tasks: BackgroundTasks, response:Response):
+          responses={403:{'model': models.ErrorResult}, 500:{'model': models.ErrorResult}, 502:{'model': models.ErrorResult}})
+async def new_job(job: models.NewJob, background_tasks: BackgroundTasks, response:Response):
     """
     POST API to create a new staging job. Accepts a JSON dictionary defined above by the Job() class,
     which is processed by FastAPI and passed to this function as an actual instance of the Job() class.
@@ -565,7 +299,7 @@ async def new_job(job: NewJob, background_tasks: BackgroundTasks, response:Respo
     :param response: An instance of fastapi.Response(), used to set the status code returned
     :return: None
     """
-    db = DBPOOL.getconn()
+    db = staged_db.DBPOOL.getconn()
     try:
         with db:
             with db.cursor() as curs:
@@ -573,13 +307,13 @@ async def new_job(job: NewJob, background_tasks: BackgroundTasks, response:Respo
                 if curs.fetchone()[0] > 0:
                     response.status_code = status.HTTP_403_FORBIDDEN
                     err_msg = "Can't create job %d, because it already exists." % job.job_id
-                    return ErrorResult(errormsg=err_msg)
+                    return models.ErrorResult(errormsg=err_msg)
 
         if (not job.files) and (not job.obs):
             err_msg = "Error for job %d: Must specify either an observation, or a list of files" % job.job_id
             response.status_code = status.HTTP_400_BAD_REQUEST
             LOGGER.error(err_msg)
-            return ErrorResult(errormsg=err_msg)
+            return models.ErrorResult(errormsg=err_msg)
 
         background_tasks.add_task(create_job, job=job)
         return
@@ -588,19 +322,19 @@ async def new_job(job: NewJob, background_tasks: BackgroundTasks, response:Respo
         response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
         exc_str = traceback.format_exc()
         LOGGER.error("Exception creating job %d: %s" % (job.job_id, exc_str))
-        return ErrorResult(errormsg='Exception creating job %d: %s' % (job.job_id, exc_str))
+        return models.ErrorResult(errormsg='Exception creating job %d: %s' % (job.job_id, exc_str))
 
     finally:   # Return the DB connection
-        DBPOOL.putconn(db)
+        staged_db.DBPOOL.putconn(db)
 
 
 @app.get("/staging/",
          status_code=status.HTTP_200_OK,
-         responses={200:{'model':JobStatus}, 404:{'model':ErrorResult}, 500:{'model':ErrorResult}})
+         responses={200:{'model':models.JobStatus}, 404:{'model':models.ErrorResult}, 500:{'model':models.ErrorResult}})
 @app.get("/staging",
          include_in_schema=False,
          status_code=status.HTTP_200_OK,
-         responses={200:{'model':JobStatus}, 404:{'model':ErrorResult}, 500:{'model':ErrorResult}})
+         responses={200:{'model':models.JobStatus}, 404:{'model':models.ErrorResult}, 500:{'model':models.ErrorResult}})
 def read_status(job_id: int, response:Response, include_files: bool = False):
     """
     GET API to read status details about an existing staging job. Accepts job_id and (optional) include_files
@@ -613,18 +347,18 @@ def read_status(job_id: int, response:Response, include_files: bool = False):
     :param response:        An instance of fastapi.Response(), used to set the status code returned
     :return:                JSON dict as defined by the JobStatus() class above
     """
-    db = DBPOOL.getconn()
+    db = staged_db.DBPOOL.getconn()
     try:
         with db:
             with db.cursor() as curs:
-                curs.execute(QUERY_JOB, (job_id,))
+                curs.execute(staged_db.QUERY_JOB, (job_id,))
                 rows = curs.fetchall()
                 if not rows:   # Job ID not found
                     response.status_code = status.HTTP_404_NOT_FOUND
-                    return ErrorResult(errormsg='Job %d not found' % job_id)
+                    return models.ErrorResult(errormsg='Job %d not found' % job_id)
                 if len(rows) > 1:   # Multiple rows for the same Job ID
                     response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
-                    return ErrorResult(errormsg='Job %d has multiple rows!' % job_id)
+                    return models.ErrorResult(errormsg='Job %d has multiple rows!' % job_id)
                 created, completed, notified, total_files = rows[0]
 
                 curs.execute('SELECT count(*) from files where job_id=%s and ready', (job_id,))
@@ -635,20 +369,20 @@ def read_status(job_id: int, response:Response, include_files: bool = False):
 
                 files = {}
                 if include_files:
-                    curs.execute(QUERY_FILES, (job_id,))
+                    curs.execute(staged_db.QUERY_FILES, (job_id,))
                     for row in curs:
                         filename, ready, error, readytime = row
                         if readytime is not None:
                             readytime = int(readytime)
                         files[filename] = (ready, error, readytime)
 
-                result = JobStatus(job_id=job_id,
-                                   created=int(created),
-                                   completed=completed,
-                                   notified=notified,
-                                   total_files=total_files,
-                                   ready_files=ready_files,
-                                   error_files=error_files)
+                result = models.JobStatus(job_id=job_id,
+                                          created=int(created),
+                                          completed=completed,
+                                          notified=notified,
+                                          total_files=total_files,
+                                          ready_files=ready_files,
+                                          error_files=error_files)
                 LOGGER.info("Job %d STATUS: %s" % (job_id, result))
                 result.files = files
                 LOGGER.debug("Job %d file status: %s" % (job_id, files))
@@ -657,19 +391,19 @@ def read_status(job_id: int, response:Response, include_files: bool = False):
         response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
         exc_str = traceback.format_exc()
         LOGGER.error('Exception getting status for job %d: %s' % (job_id, exc_str))
-        return ErrorResult(errormsg='Exception getting status for job %d: %s' % (job_id, exc_str))
+        return models.ErrorResult(errormsg='Exception getting status for job %d: %s' % (job_id, exc_str))
 
     finally:   # Return the DB connection
-        DBPOOL.putconn(db)
+        staged_db.DBPOOL.putconn(db)
 
 
 @app.delete("/staging/",
             status_code=status.HTTP_200_OK,
-            responses={404:{'model':ErrorResult}, 500:{'model':ErrorResult}})
+            responses={404:{'model':models.ErrorResult}, 500:{'model':models.ErrorResult}})
 @app.delete("/staging",
             include_in_schema=False,
             status_code=status.HTTP_200_OK,
-            responses={404:{'model':ErrorResult}, 500:{'model':ErrorResult}})
+            responses={404:{'model':models.ErrorResult}, 500:{'model':models.ErrorResult}})
 def delete_job(job_id: int, response:Response):
     """
     POST API to delete a staging job. Accepts an integer job_id value, to be deleted.
@@ -678,25 +412,25 @@ def delete_job(job_id: int, response:Response):
     :param response:  # An instance of fastapi.Response(), used to set the status code returned
     :return: None
     """
-    db = DBPOOL.getconn()
+    db = staged_db.DBPOOL.getconn()
     try:
         with db:
             with db.cursor() as curs:
-                curs.execute(DELETE_JOB % (job_id,))
+                curs.execute(staged_db.DELETE_JOB % (job_id,))
                 if curs.rowcount == 0:
                     response.status_code = status.HTTP_404_NOT_FOUND
-                    return ErrorResult(errormsg='Job %d not found' % job_id)
-                curs.execute(DELETE_FILES, (job_id,))
+                    return models.ErrorResult(errormsg='Job %d not found' % job_id)
+                curs.execute(staged_db.DELETE_FILES, (job_id,))
                 LOGGER.info('Job %d DELETED.' % job_id)
         return
     except Exception:  # Any other errors
         response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
         exc_str = traceback.format_exc()
         LOGGER.error('Exception deleting job %d: %s' % (job_id, exc_str))
-        return ErrorResult(errormsg='Exception deleting job %d: %s' % (job_id, exc_str))
+        return models.ErrorResult(errormsg='Exception deleting job %d: %s' % (job_id, exc_str))
 
     finally:   # Return the DB connection
-        DBPOOL.putconn(db)
+        staged_db.DBPOOL.putconn(db)
 
 
 @app.get("/ping/")
@@ -714,11 +448,11 @@ def ping():
 
 @app.get("/get_stats/",
          status_code=status.HTTP_200_OK,
-         responses={200:{'model':GlobalStatistics}, 500:{'model':ErrorResult}})
+         responses={200:{'model':models.GlobalStatistics}, 500:{'model':models.ErrorResult}})
 @app.get("/get_stats",
          include_in_schema=False,
          status_code=status.HTTP_200_OK,
-         responses={200:{'model':GlobalStatistics}, 500:{'model':ErrorResult}})
+         responses={200:{'model':models.GlobalStatistics}, 500:{'model':models.ErrorResult}})
 def get_stats(response:Response):
     """
     GET API to return an overall job and file statistics for this process (the staging web server)
@@ -727,7 +461,7 @@ def get_stats(response:Response):
     :param response:        An instance of fastapi.Response(), used to set the status code returned
     :return: GlobalStatus object
     """
-    db = DBPOOL.getconn()
+    db = staged_db.DBPOOL.getconn()
     try:
         with db:
             with db.cursor() as curs:
@@ -753,33 +487,33 @@ def get_stats(response:Response):
         else:
             lm = None
 
-        result = GlobalStatistics(kafkad_heartbeat=hb,
-                                  kafka_alive=kafka_alive,
-                                  last_message=lm,
-                                  completed_jobs=completed_jobs,
-                                  incomplete_jobs=incomplete_jobs,
-                                  ready_files=ready_files,
-                                  error_files=error_files,
-                                  waiting_files=waiting_files)
+        result = models.GlobalStatistics(kafkad_heartbeat=hb,
+                                         kafka_alive=kafka_alive,
+                                         last_message=lm,
+                                         completed_jobs=completed_jobs,
+                                         incomplete_jobs=incomplete_jobs,
+                                         ready_files=ready_files,
+                                         error_files=error_files,
+                                         waiting_files=waiting_files)
         LOGGER.info('Called get_stats.')
         return result
     except Exception:
         response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
         exc_str = traceback.format_exc()
         LOGGER.error('Exception getting staging system status: %s' % (exc_str,))
-        return ErrorResult(errormsg='Exception getting staging system status: %s' % (exc_str,))
+        return models.ErrorResult(errormsg='Exception getting staging system status: %s' % (exc_str,))
 
     finally:   # Return the DB connection
-        DBPOOL.putconn(db)
+        staged_db.DBPOOL.putconn(db)
 
 
 @app.get("/get_joblist/",
          status_code=status.HTTP_200_OK,
-         responses={200:{'model':JobList}, 500:{'model':ErrorResult}})
+         responses={200:{'model':models.JobList}, 500:{'model':models.ErrorResult}})
 @app.get("/get_joblist",
          include_in_schema=False,
          status_code=status.HTTP_200_OK,
-         responses={200:{'model':JobList}, 500:{'model':ErrorResult}})
+         responses={200:{'model':models.JobList}, 500:{'model':models.ErrorResult}})
 def get_joblist(response:Response):
     """
     GET API to return a list of all jobs, giving the number of staged files, the total number of files, and the
@@ -788,12 +522,12 @@ def get_joblist(response:Response):
     :param response:        An instance of fastapi.Response(), used to set the status code returned
     :return: JobList object
     """
-    db = DBPOOL.getconn()
+    db = staged_db.DBPOOL.getconn()
     try:
-        result = JobList()
+        result = models.JobList()
         with db:
             with db.cursor() as curs:
-                curs.execute(LIST_JOBS)
+                curs.execute(staged_db.LIST_JOBS)
                 for row in curs.fetchall():
                     job_id, staged_files, total_files, completed = row
                     result.jobs[job_id] = (staged_files, total_files, completed)
@@ -803,10 +537,10 @@ def get_joblist(response:Response):
         response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
         exc_str = traceback.format_exc()
         LOGGER.error('Exception getting staging job list: %s' % (exc_str,))
-        return ErrorResult(errormsg='Exception getting staging job list: %s' % (exc_str,))
+        return models.ErrorResult(errormsg='Exception getting staging job list: %s' % (exc_str,))
 
     finally:   # Return the DB connection
-        DBPOOL.putconn(db)
+        staged_db.DBPOOL.putconn(db)
 
 
 ########################################################################################################
@@ -817,12 +551,12 @@ def get_joblist(response:Response):
 
 @app.post("/v1/security/login/",
           status_code=status.HTTP_200_OK,
-          response_model=ScoutLoginResponse)
+          response_model=models.ScoutLoginResponse)
 @app.post("/v1/security/login",
           include_in_schema=False,
           status_code=status.HTTP_200_OK,
-          response_model=ScoutLoginResponse)
-def dummy_scout_login(account: ScoutLogin, response:Response):
+          response_model=models.ScoutLoginResponse)
+def dummy_scout_login(account: models.ScoutLogin, response:Response):
     """
     Emulate Scout API for development. Takes an account name and password, returns a token string.
     :param account: ScoutLogin (keys are 'acct' and 'pass')
@@ -831,7 +565,7 @@ def dummy_scout_login(account: ScoutLogin, response:Response):
     """
     if (account.acct == config.SCOUT_API_USER) and (account.passwd == config.SCOUT_API_PASSWORD):
         LOGGER.info('Pretending be Scout: /v1/security/login passed, returning token')
-        return ScoutLoginResponse(response=DUMMY_TOKEN)
+        return models.ScoutLoginResponse(response=DUMMY_TOKEN)
     else:
         LOGGER.error('Pretending be Scout: /v1/security/login failed, Bad username/password')
         response.status_code = 401
@@ -843,7 +577,7 @@ def dummy_scout_login(account: ScoutLogin, response:Response):
 @app.post("/v1/request/batchstage",
           include_in_schema=False,
           status_code=status.HTTP_200_OK)
-def dummy_scout_stage(stagedata: StageFiles, request:Request, response:Response):
+def dummy_scout_stage(stagedata: models.StageFiles, request:Request, response:Response):
     """
     Emulate Scout's staging server for development. 'Stages' the files passed in the list of filenames.
 
@@ -863,11 +597,11 @@ def dummy_scout_stage(stagedata: StageFiles, request:Request, response:Response)
 
 @app.get("/v1/file/",
          status_code=status.HTTP_200_OK,
-         response_model=ScoutFileStatus)
+         response_model=models.ScoutFileStatus)
 @app.get("/v1/file",
          include_in_schema=False,
          status_code=status.HTTP_200_OK,
-         response_model=ScoutFileStatus)
+         response_model=models.ScoutFileStatus)
 def dummy_scout_status(request:Request, response:Response, path: str = Query(...)):
     """
     Emulate Scout's staging server for development. Returns a status structure for the given (single) file.
@@ -881,7 +615,7 @@ def dummy_scout_status(request:Request, response:Response, path: str = Query(...
     :return: None
     """
     if request.headers['Authorization'] == 'Bearer %s' % DUMMY_TOKEN:
-        resp = ScoutFileStatus(path=path)
+        resp = models.ScoutFileStatus(path=path)
         resp.onlineblocks = 22
         if path.startswith('offline_'):
             resp.offlineblocks = 1
@@ -905,7 +639,7 @@ def dummy_scout_status(request:Request, response:Response, path: str = Query(...
 @app.post("/jobresult",
           include_in_schema=False,
           status_code=status.HTTP_200_OK)
-def dummy_asvo(result: JobResult):
+def dummy_asvo(result: models.JobResult):
     """
     Emulate ASVO server for development. Used to pass a job result back to ASVO, when all files are staged, or when
     the job times out.

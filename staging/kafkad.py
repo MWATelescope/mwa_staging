@@ -313,57 +313,57 @@ def is_file_ready(filename):
     return int(offlineblocks) == 0
 
 
-def check_job_for_existing_files(job_id, db):
-    """
-    For each of the files in this job, find all the files that were in an already-processed job, and marked as ready
-    there. If there are any files with matching names that were staged for a different job in the past, and might still
-    be in the cache, query Scout about their status from oldest to newest until we find one that is in the cache. Then
-    assume that all newer files will still be cached too, so update their state in the files table.
-
-    :param job_id: Integer Job ID
-    :param db: Database connection object
-    :return: None
-    """
-    with db.cursor() as curs:
-        curs.execute('SELECT filename FROM files WHERE job_id=%s AND not ready', (job_id,))
-        rows = curs.fetchall()
-        file_dict = {}   # Dict with filename as key, and readytime as value
-        for row in rows:
-            filename = row[0]
-            LOGGER.debug('    File %s from job %d:' % (filename, job_id))
-            # Find the most recently 'ready' file with the same name but from a different job
-            curs.execute(ALREADY_DONE_QUERY, (filename, job_id))
-            result = curs.fetchall()
-            if result:
-                LOGGER.debug('        Found already done at %s' % result[0][0])
-                file_dict[filename] = result[0][0]
-            else:
-                LOGGER.debug('        Not found previously.')
-
-        if file_dict:
-            earliest_good = datetime.datetime(year=9999, month=12, day=31, tzinfo=timezone.utc)
-            check_files = list(file_dict.keys())
-            check_files.sort(key=lambda x:file_dict[x])
-            if not is_file_ready(check_files[-1]):   # Check the most recently ready file first
-                return   # The most recently ready file is still in the cache, so none of the older ones will be
-
-            for filename in check_files:
-                LOGGER.debug('    Previous file %s:' % filename)
-                readytime = file_dict[filename]
-                if file_dict[filename] >= earliest_good:   # This file was ready more recently than one we know is still cached
-                    LOGGER.debug('        More recent than %s, so marked as ready' % earliest_good)
-                    # Update all not-ready records for this file to say that it's still cached, with the old readytime
-                    curs.execute('UPDATE files SET ready = true, readytime = %s WHERE filename=%s and not ready',
-                                 (readytime, filename))
-                else:   # This file is older than one we know is still cached
-                    if is_file_ready(filename=filename):   # If it is still cached
-                        LOGGER.debug('        Is still ready.')
-                        # Update all not-ready records for this file to say that it's still cached, with the old readytime
-                        curs.execute('UPDATE files SET ready=true, readytime = %s WHERE filename=%s and not ready',
-                                     (readytime, filename))
-                        earliest_good = file_dict[filename]
-                    else:
-                        LOGGER.debug('        Is not still ready.')
+# def check_job_for_existing_files(job_id, db):
+#     """
+#     For each of the files in this job, find all the files that were in an already-processed job, and marked as ready
+#     there. If there are any files with matching names that were staged for a different job in the past, and might still
+#     be in the cache, query Scout about their status from oldest to newest until we find one that is in the cache. Then
+#     assume that all newer files will still be cached too, so update their state in the files table.
+#
+#     :param job_id: Integer Job ID
+#     :param db: Database connection object
+#     :return: None
+#     """
+#     with db.cursor() as curs:
+#         curs.execute('SELECT filename FROM files WHERE job_id=%s AND not ready', (job_id,))
+#         rows = curs.fetchall()
+#         file_dict = {}   # Dict with filename as key, and readytime as value
+#         for row in rows:
+#             filename = row[0]
+#             LOGGER.debug('    File %s from job %d:' % (filename, job_id))
+#             # Find the most recently 'ready' file with the same name but from a different job
+#             curs.execute(ALREADY_DONE_QUERY, (filename, job_id))
+#             result = curs.fetchall()
+#             if result:
+#                 LOGGER.debug('        Found already done at %s' % result[0][0])
+#                 file_dict[filename] = result[0][0]
+#             else:
+#                 LOGGER.debug('        Not found previously.')
+#
+#         if file_dict:
+#             earliest_good = datetime.datetime(year=9999, month=12, day=31, tzinfo=timezone.utc)
+#             check_files = list(file_dict.keys())
+#             check_files.sort(key=lambda x:file_dict[x])
+#             if not is_file_ready(check_files[-1]):   # Check the most recently ready file first
+#                 return   # The most recently ready file is still in the cache, so none of the older ones will be
+#
+#             for filename in check_files:
+#                 LOGGER.debug('    Previous file %s:' % filename)
+#                 readytime = file_dict[filename]
+#                 if file_dict[filename] >= earliest_good:   # This file was ready more recently than one we know is still cached
+#                     LOGGER.debug('        More recent than %s, so marked as ready' % earliest_good)
+#                     # Update all not-ready records for this file to say that it's still cached, with the old readytime
+#                     curs.execute('UPDATE files SET ready = true, readytime = %s WHERE filename=%s and not ready',
+#                                  (readytime, filename))
+#                 else:   # This file is older than one we know is still cached
+#                     if is_file_ready(filename=filename):   # If it is still cached
+#                         LOGGER.debug('        Is still ready.')
+#                         # Update all not-ready records for this file to say that it's still cached, with the old readytime
+#                         curs.execute('UPDATE files SET ready=true, readytime = %s WHERE filename=%s and not ready',
+#                                      (readytime, filename))
+#                         earliest_good = file_dict[filename]
+#                     else:
+#                         LOGGER.debug('        Is not still ready.')
 
 
 def HandleMessages(consumer):
@@ -431,7 +431,7 @@ def notify_job(curs, job_id):
                      error_files=error_files,
                      comment=comment)
     if ok:
-        LOGGER.info('Job %d notified.')
+        LOGGER.info('Job %d notified.' % job_id)
     else:
         LOGGER.error('Job %d failed to notify.')
     return ok   # True if the call to notify ASVO was successful
@@ -485,14 +485,14 @@ def MonitorJobs(consumer):
                                 else:
                                     notify_attempts[job_id] = time.time()
 
-                LOGGER.debug('Looking to see if any jobs need to be checked for already-staged files')
-                curs.execute('SELECT job_id FROM staging_jobs WHERE not notified AND not checked')
-                rows = curs.fetchall()
-                for row in rows:
-                    job_id = row[0]
-                    LOGGER.debug('Check for already staged files on job %d' % job_id)
-                    check_job_for_existing_files(job_id=job_id, db=mondb)
-                    curs.execute('UPDATE staging_jobs SET checked=true WHERE job_id=%s', (job_id,))
+                # LOGGER.debug('Looking to see if any jobs need to be checked for already-staged files')
+                # curs.execute('SELECT job_id FROM staging_jobs WHERE not notified AND not checked')
+                # rows = curs.fetchall()
+                # for row in rows:
+                #     job_id = row[0]
+                #     LOGGER.debug('Check for already staged files on job %d' % job_id)
+                #     check_job_for_existing_files(job_id=job_id, db=mondb)
+                #     curs.execute('UPDATE staging_jobs SET checked=true WHERE job_id=%s', (job_id,))
 
                 mondb.commit()
 
