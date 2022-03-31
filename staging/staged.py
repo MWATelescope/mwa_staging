@@ -12,6 +12,7 @@ from typing import Optional
 import logging
 from logging import handlers
 import traceback
+from threading import Semaphore
 
 from fastapi import FastAPI, BackgroundTasks, Query, Request, Response, status
 import psycopg2
@@ -26,7 +27,7 @@ from mwa_files import MWAObservation as Observation
 from mwa_files import get_mwa_files as get_files
 
 MINCONN = 2          # Start with this many database connections
-MAXCONN = 10         # Don't ever create more than this many
+MAXCONN = 100         # Don't ever create more than this many
 
 DBPOOL = pool.ThreadedConnectionPool(0, 0)    # Will be a real, connected psycopg2 database connection pool object after startup
 
@@ -339,6 +340,25 @@ class ScoutAuth(AuthBase):
 ########################################################################
 # Utility functions
 
+class ReallyThreadedConnectionPool(pool.ThreadedConnectionPool):
+    """
+    Block if we exceed the maximum number of connections, instead of throwing an exception.
+
+    From: https://stackoverflow.com/questions/48532301/python-postgres-psycopg2-threadedconnectionpool-exhausted
+    """
+    def __init__(self, minconn, maxconn, *args, **kwargs):
+        self._semaphore = Semaphore(maxconn)
+        super().__init__(minconn, maxconn, *args, **kwargs)
+
+    def getconn(self, *args, **kwargs):
+        self._semaphore.acquire()
+        return super().getconn(*args, **kwargs)
+
+    def putconn(self, *args, **kwargs):
+        super().putconn(*args, **kwargs)
+        self._semaphore.release()
+
+
 def initdb(minconn=MINCONN, maxconn=MAXCONN):
     """
     Initialise a connection pool to the database.
@@ -348,12 +368,12 @@ def initdb(minconn=MINCONN, maxconn=MAXCONN):
     :param maxconn: Maximum number of connections to open - getconn() will fail if this many are already open.
     :return: None
     """
-    dbpool = pool.ThreadedConnectionPool(minconn=minconn,
-                                         maxconn=maxconn,
-                                         host=config.DBHOST,
-                                         user=config.DBUSER,
-                                         database=config.DBNAME,
-                                         password=config.DBPASSWORD)
+    dbpool = ReallyThreadedConnectionPool(minconn=minconn,
+                                          maxconn=maxconn,
+                                          host=config.DBHOST,
+                                          user=config.DBUSER,
+                                          database=config.DBNAME,
+                                          password=config.DBPASSWORD)
     return dbpool
 
 
@@ -421,7 +441,7 @@ def send_result(notify_url,
         return True
 
 
-def create_job(job: NewJob, db=None):
+def create_job(job: NewJob):
     """
     Carries out the actual job of finding out what files are to include in the job, asking Scout to stage those
     files, and creating the new job record in the database. Runs in the background after the new_job endpoint
@@ -439,7 +459,6 @@ def create_job(job: NewJob, db=None):
         JOB_CREATION_EXCEPTION
 
     :param job: An instance of the NewJob() class.
-    :param db: A Postgres daatabse connection instance
     :return: None - runs in the background after the new_job endpoint has already returned.
     """
     pathlist = []
@@ -459,6 +478,7 @@ def create_job(job: NewJob, db=None):
                     return_code=JOB_NO_FILES,
                     comment='No files to stage.')
     else:
+        db = DBPOOL.getconn()
         try:
             with db:
                 data = {'path': pathlist, 'copy': 0, 'inode': [], 'key':str(job.job_id), 'topic':config.KAFKA_TOPIC}
@@ -488,6 +508,9 @@ def create_job(job: NewJob, db=None):
                         return_code=JOB_CREATION_EXCEPTION,
                         comment='Exception while trying to create job %d: %s' % (job.job_id, exc_str))
             LOGGER.error('Exception while trying to create job %d: %s' % (job.job_id, exc_str))
+
+        finally:   # Return the DB connection
+            DBPOOL.putconn(db)
 
 
 ###############################################################################
@@ -558,7 +581,7 @@ async def new_job(job: NewJob, background_tasks: BackgroundTasks, response:Respo
             LOGGER.error(err_msg)
             return ErrorResult(errormsg=err_msg)
 
-        background_tasks.add_task(create_job, job=job, db=db)
+        background_tasks.add_task(create_job, job=job)
         return
 
     except Exception:  # Any other errors
