@@ -9,8 +9,8 @@ To test with manually generated Kafka messages, eg:
 >>> from kafka import KafkaProducer
 >>> import json
 >>> p = KafkaProducer(bootstrap_servers=['scoutam.pawsey.org.au:9092'], value_serializer=lambda v: json.dumps(v).encode('utf-8'))
->>> p.send('mwa', {'filename':'gibber'})
->>> p.send('mwa', {'filename':'foo'})
+>>> p.send('mwa', {'Filename':'gibber'})
+>>> p.send('mwa', {'Filename':'foo'})
 
 To view messages, do:
 
