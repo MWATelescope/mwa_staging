@@ -56,9 +56,11 @@ class ApiConfig():
         self.DBNAME = os.getenv('DBNAME')
 
         self.SCOUT_STAGE_URL = os.getenv('SCOUT_STAGE_URL')
+        self.SCOUT_CANCEL_URL = os.getenv('SCOUT_CANCEL_URL')
         self.SCOUT_LOGIN_URL = os.getenv('SCOUT_LOGIN_URL')
         self.SCOUT_API_USER = os.getenv('SCOUT_API_USER')
         self.SCOUT_API_PASSWORD = os.getenv('SCOUT_API_PASSWORD')
+        self.SCOUT_QUERY_URL = os.getenv('SCOUT_QUERY_URL')
 
         self.KAFKA_TOPIC = os.getenv('KAFKA_TOPIC')
 
@@ -216,27 +218,27 @@ def create_job(job: models.NewJob):
     else:
         db = staged_db.DBPOOL.getconn()
         try:
-            with db:
-                data = {'path': pathlist, 'copy': 0, 'inode': [], 'key':str(job.job_id), 'topic':config.KAFKA_TOPIC}
-                result = requests.put(config.SCOUT_STAGE_URL, json=data, auth=ScoutAuth(get_scout_token()), verify=False)
-                if result.status_code == 403:
-                    result = requests.put(config.SCOUT_STAGE_URL, json=data, auth=ScoutAuth(get_scout_token(refresh=True)), verify=False)
-                LOGGER.debug('Got result for job %d from Scout API batchstage call: %d:%s' % (job.job_id, result.status_code, result.text))
+            data = {'path': pathlist, 'copy': 0, 'inode': [], 'key':str(job.job_id), 'topic':config.KAFKA_TOPIC}
+            result = requests.put(config.SCOUT_STAGE_URL, json=data, auth=ScoutAuth(get_scout_token()), verify=False)
+            if result.status_code == 403:
+                result = requests.put(config.SCOUT_STAGE_URL, json=data, auth=ScoutAuth(get_scout_token(refresh=True)), verify=False)
+            LOGGER.debug('Got result for job %d from Scout API batchstage call: %d:%s' % (job.job_id, result.status_code, result.text))
 
-                if result.status_code == 200:   # All files requested to be staged
+            if result.status_code == 200:   # All files requested to be staged
+                with db:
                     with db.cursor() as curs:
                         curs.execute(staged_db.CREATE_JOB, (job.job_id,  # job_id
                                                             job.notify_url,  # URL to call on success/failure
                                                             datetime.datetime.now(timezone.utc),  # created
                                                             len(pathlist)))  # total_files
                         psycopg2.extras.execute_values(curs, staged_db.WRITE_FILES, [(job.job_id, f, False, False) for f in pathlist])
-                        LOGGER.info('Job %d created.' % job.job_id)
-                else:
-                    send_result(notify_url=job.notify_url,
-                                job_id=job.job_id,
-                                return_code=JOB_SCOUT_CALL_FAILED,
-                                comment='Scout API returned an error: %s' % result.text)
-                    LOGGER.info('Job %d NOT created, Scout call failed: %s' % (job.job_id, result.text))
+                LOGGER.info('Job %d created.' % job.job_id)
+            else:
+                send_result(notify_url=job.notify_url,
+                            job_id=job.job_id,
+                            return_code=JOB_SCOUT_CALL_FAILED,
+                            comment='Scout API returned an error: %s' % result.text)
+                LOGGER.info('Job %d NOT created, Scout call failed: %s' % (job.job_id, result.text))
         except:
             exc_str = traceback.format_exc()
             send_result(notify_url=job.notify_url,
@@ -287,9 +289,9 @@ async def new_job(job: models.NewJob, background_tasks: BackgroundTasks, respons
     job details.
 
     This endpoint will return:
-        403 if the job ID already exists
-        400 if neither a file list or an observation structure is given
-        500 if there is an exception
+        403 if the job ID already exists,
+        400 if neither a file list or an observation structure is given,
+        500 if there is an exception.
 
     Any errors in the background job creation process will be returned by calling job.notify_url
     \f
@@ -385,7 +387,6 @@ def read_status(job_id: int, response:Response, include_files: bool = False):
                                           error_files=error_files)
                 LOGGER.info("Job %d STATUS: %s" % (job_id, result))
                 result.files = files
-                LOGGER.debug("Job %d file status: %s" % (job_id, files))
                 return result
     except Exception:
         response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -416,6 +417,27 @@ def delete_job(job_id: int, response:Response):
     try:
         with db:
             with db.cursor() as curs:
+                curs.execute(staged_db.QUERY_FILES % (job_id,))
+                pathlist = []
+                for row in curs:
+                    filename, ready, error, readytime = row
+                    pathlist.append(filename)
+
+        LOGGER.info('Cancelling staging requests for %d files in job %d.' % (len(pathlist), job_id))
+        data = {'path': pathlist, 'copy': 0, 'inode': [], 'key': str(job_id), 'topic': config.KAFKA_TOPIC}
+        result = requests.put(config.SCOUT_CANCEL_URL,
+                              json=data,
+                              auth=ScoutAuth(get_scout_token()),
+                              verify=False)
+        if result.status_code == 403:
+            result = requests.put(config.SCOUT_CANCEL_URL,
+                                  json=data,
+                                  auth=ScoutAuth(get_scout_token(refresh=True)),
+                                  verify=False)
+        LOGGER.debug('Got result for job %d from Scout API cancelbatchstage call: %d:%s' % (job_id, result.status_code, result.text))
+
+        with db:
+            with db.cursor() as curs:
                 curs.execute(staged_db.DELETE_JOB % (job_id,))
                 if curs.rowcount == 0:
                     response.status_code = status.HTTP_404_NOT_FOUND
@@ -437,8 +459,7 @@ def delete_job(job_id: int, response:Response):
 @app.get("/ping", include_in_schema=False)
 def ping():
     """
-    GET API to return nothing, with a 200 status code, if we are alive. If we're not alive, this function won't be
-    called at all.
+    GET API to return nothing, with a 200 status code, to show that we are alive.
     \f
     :return: None
     """
@@ -495,7 +516,7 @@ def get_stats(response:Response):
                                          ready_files=ready_files,
                                          error_files=error_files,
                                          waiting_files=waiting_files)
-        LOGGER.info('Called get_stats.')
+        LOGGER.debug('Called get_stats: %s' % result)
         return result
     except Exception:
         response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -543,6 +564,55 @@ def get_joblist(response:Response):
         staged_db.DBPOOL.putconn(db)
 
 
+@app.post("/filestatus/",
+          status_code=status.HTTP_200_OK,
+          responses={200: {'model': models.FileStatusResult}, 404: {'model': models.ErrorResult},
+                     500: {'model': models.ErrorResult}})
+@app.post("/filestatus",
+          include_in_schema=False,
+          status_code=status.HTTP_200_OK,
+          responses={200: {'model': models.FileStatusResult}, 404: {'model': models.ErrorResult},
+                     500: {'model': models.ErrorResult}})
+async def file_status(data: models.FileStatus, response: Response):
+    """
+    GET API to return the status of one or more files, using the Scout API to query the
+    file status.
+
+    This endpoint will return:
+        200 with the status structure if all the files exist,
+        404 if one or more files was not found,
+        500 if there is an exception.
+
+    \f
+    :param data: A structure containing one member, 'files', containing a list of filenames
+    :param response: An instance of fastapi.Response(), used to set the status code returned
+    :return: None
+    """
+    try:
+        allresults = {}
+        for filename in data.files:
+            LOGGER.info('Getting status for %s' % str(filename))
+            result = requests.get(config.SCOUT_QUERY_URL, params={'path': filename}, auth=ScoutAuth(get_scout_token()),
+                                  verify=False)
+            if result.status_code == 401:
+                result = requests.get(config.SCOUT_QUERY_URL, params={'path': filename},
+                                      auth=ScoutAuth(get_scout_token(refresh=False)), verify=False)
+            if result.status_code != 200:
+                response.status_code = status.HTTP_404_NOT_FOUND
+                LOGGER.error('Scout call failed during a file status request: %d:%s' % (result.status_code, result.text))
+                return models.ErrorResult(errormsg="Scout call failed during a file status request: %d:%s" % (result.status_code, result.text))
+
+            resdict = result.json()
+            offlineblocks = resdict.get('offlineblocks', None)
+            allresults[filename] = (offlineblocks == 0)
+        return allresults
+    except Exception:  # Any other errors
+        response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+        exc_str = traceback.format_exc()
+        LOGGER.error("Exception getting file status: %s" % exc_str)
+        return models.ErrorResult(errormsg="Exception getting file status: %s" % exc_str)
+
+
 ########################################################################################################
 #
 #    Dummy endpoints, emulating the Scout API for testing.
@@ -559,6 +629,7 @@ def get_joblist(response:Response):
 def dummy_scout_login(account: models.ScoutLogin, response:Response):
     """
     Emulate Scout API for development. Takes an account name and password, returns a token string.
+    \f
     :param account: ScoutLogin (keys are 'acct' and 'pass')
     :param response:        An instance of fastapi.Response(), used to set the status code returned
     :return: Token string in a dict, with key 'response'
