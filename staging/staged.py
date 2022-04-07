@@ -305,7 +305,7 @@ async def new_job(job: models.NewJob, background_tasks: BackgroundTasks, respons
     try:
         with db:
             with db.cursor() as curs:
-                curs.execute('SELECT count(*) FROM staging_jobs WHERE job_id = %s' % (job.job_id,))
+                curs.execute('SELECT count(*) FROM staging_jobs WHERE job_id = %s', (job.job_id,))
                 if curs.fetchone()[0] > 0:
                     response.status_code = status.HTTP_403_FORBIDDEN
                     err_msg = "Can't create job %d, because it already exists." % job.job_id
@@ -361,7 +361,7 @@ def read_status(job_id: int, response:Response, include_files: bool = False):
                 if len(rows) > 1:   # Multiple rows for the same Job ID
                     response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
                     return models.ErrorResult(errormsg='Job %d has multiple rows!' % job_id)
-                created, completed, notified, total_files = rows[0]
+                created, completed, total_files = rows[0]
 
                 curs.execute('SELECT count(*) from files where job_id=%s and ready', (job_id,))
                 ready_files = curs.fetchall()[0][0]
@@ -381,7 +381,6 @@ def read_status(job_id: int, response:Response, include_files: bool = False):
                 result = models.JobStatus(job_id=job_id,
                                           created=int(created),
                                           completed=completed,
-                                          notified=notified,
                                           total_files=total_files,
                                           ready_files=ready_files,
                                           error_files=error_files)
@@ -417,7 +416,7 @@ def delete_job(job_id: int, response:Response):
     try:
         with db:
             with db.cursor() as curs:
-                curs.execute(staged_db.QUERY_FILES % (job_id,))
+                curs.execute(staged_db.QUERY_UNIQUE_FILES, (job_id, job_id))
                 pathlist = []
                 for row in curs:
                     filename, ready, error, readytime = row
@@ -438,7 +437,7 @@ def delete_job(job_id: int, response:Response):
 
         with db:
             with db.cursor() as curs:
-                curs.execute(staged_db.DELETE_JOB % (job_id,))
+                curs.execute(staged_db.DELETE_JOB, (job_id,))
                 if curs.rowcount == 0:
                     response.status_code = status.HTTP_404_NOT_FOUND
                     return models.ErrorResult(errormsg='Job %d not found' % job_id)

@@ -15,8 +15,8 @@ DBPOOL = pool.ThreadedConnectionPool(0, 0)    # Will be a real, connected psycop
 
 
 CREATE_JOB = """
-INSERT INTO staging_jobs (job_id, notify_url, created, completed, total_files, notified, checked)
-VALUES (%s, %s, %s, false, %s, false, false)
+INSERT INTO staging_jobs (job_id, notify_url, created, completed, total_files)
+VALUES (%s, %s, %s, false, %s)
 """
 
 DELETE_JOB = """
@@ -35,7 +35,7 @@ WHERE job_id = %s
 """
 
 QUERY_JOB = """
-SELECT extract(epoch from created), completed, notified, total_files
+SELECT extract(epoch from created), completed, total_files
 FROM staging_jobs
 WHERE job_id = %s
 """
@@ -55,6 +55,16 @@ FROM files
 WHERE job_id = %s
 """
 
+# All files belonging to the given job_id, that AREN'T in any other job
+QUERY_UNIQUE_FILES = """
+SELECT filename 
+FROM (SELECT filename 
+      FROM files 
+      WHERE job_id=%s) AS tquery 
+WHERE (SELECT count(*) 
+       FROM files 
+       WHERE files.filename=tquery.filename AND job_id <> %s) = 0
+"""
 
 class ReallyThreadedConnectionPool(pool.ThreadedConnectionPool):
     """
