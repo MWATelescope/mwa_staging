@@ -2,12 +2,12 @@
 CREATE TABLE IF NOT EXISTS staging_jobs (
     -- One row per staging job
     job_id integer,
-    notify_url text,
+    notify_url text,                   -- Callback URL for when a job is completed, or times out
     created timestamp with time zone,
-    completed boolean,
+    completed boolean,                 -- True if all files have been staged
     total_files integer,
-    notified boolean,
-    checked boolean,
+    notified boolean,                  -- True if the notify_url callback has been called, successfully
+    checked boolean,                   -- Not used in the current version
 
     PRIMARY KEY (job_id)
 );
@@ -16,9 +16,9 @@ CREATE TABLE IF NOT EXISTS files (
     -- One row per file in ach job. The same filename in multiple jobs will be in multiple rows in this table.
     job_id integer,
     filename text,
-    ready boolean,
-    error boolean,
-    readytime timestamp with time zone,
+    ready boolean,                       -- True if the file has been staged successfully
+    error boolean,                       -- True if the Kafka message indicated an error staging that file
+    readytime timestamp with time zone,  -- Timestamp when the Kafka message about that file (ready or error) was processed.
 
     PRIMARY KEY (job_id, filename)
 );
