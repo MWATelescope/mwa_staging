@@ -154,6 +154,9 @@ view their output.
 The API server is implemented in staged.py, mwa_files.py, staged_models.py and 
 staged_db.py.
 
+All the MWA-specific code and data structures are in mwa_files.py, to make
+it easier to adapt this code for a different telescope.
+
 ### PostgreSQL & PG Admin
 We make use of a local PostgreSQL server to store records related to staging 
 jobs and their associated files. You can view the table definitions in 
