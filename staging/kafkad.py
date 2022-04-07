@@ -79,11 +79,11 @@ EXPIRY_TIME = 86400    # Return an error if it's been more than a day since a jo
 
 # All jobs that haven't been notified as finished, that have at least one 'ready' file
 COMPLETION_QUERY = """
-SELECT files.job_id, count(*), staging_jobs.total_files, staging_jobs.completed, staging_jobs.checked,
+SELECT files.job_id, count(*), staging_jobs.total_files, staging_jobs.completed,
        staging_jobs.notify_url
 FROM files JOIN staging_jobs USING(job_id)
-WHERE (ready or error) AND (not staging_jobs.notified) 
-GROUP BY (files.job_id, staging_jobs.total_files, staging_jobs.completed, staging_jobs.checked,
+WHERE (ready or error) 
+GROUP BY (files.job_id, staging_jobs.total_files, staging_jobs.completed,
        staging_jobs.notify_url)
 """
 
@@ -338,11 +338,14 @@ def HandleMessages(consumer):
             consumer.commit()   # Tell the Kafka server we've processed that message, so we don't see it again.
 
 
-def notify_job(curs, job_id):
+def notify_and_delete_job(curs, job_id):
     """
+    Call the notify_url, and if that call is successful, delete the job and return True.
+
+    If unsuccessful, return False.
 
     :param curs:  Psycopg2 cursor object
-    :param job_id:
+    :param job_id: integer job ID
     :return:
     """
     try:
@@ -384,7 +387,16 @@ def notify_job(curs, job_id):
         LOGGER.info('Job %d notified.' % job_id)
     else:
         LOGGER.error('Job %d failed to notify.')
-    return ok   # True if the call to notify ASVO was successful
+        return False
+
+    try:
+        curs.execute("DELETE FROM files WHERE job_id = %s", (job_id,))
+        curs.execute("DELETE FROM staging_jobs WHERE job_id = %s", (job_id,))
+        LOGGER.info('Job %d DELETED.' % job_id)
+        return True
+    except:
+        LOGGER.error('Exception when deleting job %d: %s' % (job_id, traceback.format_exc()))
+        return False
 
 
 def MonitorJobs(consumer):
@@ -400,6 +412,18 @@ def MonitorJobs(consumer):
                              password=config.DBPASSWORD,
                              host=config.DBHOST,
                              database=config.DBNAME)
+
+    # TODO - remove this after it's run once, to delete legacy jobs
+    with mondb:
+        with mondb.cursor() as curs:
+            curs.execute("SELECT job_id from staging_jobs where notified")
+            rows = curs.fetchall()
+            for row in rows:
+                job_id = row[0]
+                curs.execute("DELETE FROM files WHERE job_id = %s", (job_id,))
+                curs.execute("DELETE FROM staging_jobs WHERE job_id = %s", (job_id,))
+                LOGGER.info('Previously notified job %d DELETED.' % job_id)
+
     while True:
         with mondb:
             with mondb.cursor() as curs:
@@ -408,13 +432,12 @@ def MonitorJobs(consumer):
 
                 LOGGER.debug('Checking to see if jobs are complete')
                 # Loop over all jobs that haven't been notified as finished, that have at least one 'ready' or 'error' file
-                for job_id, num_files, total_files, completed, checked, notify_url in rows:
+                for job_id, num_files, total_files, completed, notify_url in rows:
                     LOGGER.debug('Check completion on job %d' % job_id)
                     if completed:   # Already marked as complete, but ASVO hasn't been successfully notified:
                         if ((time.time() - notify_attempts.get(job_id, 0)) > RETRY_INTERVAL):
-                            ok = notify_job(curs=curs, job_id=job_id)
+                            ok = notify_and_delete_job(curs=curs, job_id=job_id)
                             if ok:
-                                curs.execute('UPDATE staging_jobs SET notified=true WHERE job_id=%s', (job_id,))
                                 mondb.commit()
                                 if job_id in notify_attempts:
                                     del notify_attempts[job_id]
@@ -426,9 +449,8 @@ def MonitorJobs(consumer):
                             curs.execute('UPDATE staging_jobs SET completed=true WHERE job_id=%s', (job_id,))
                             mondb.commit()
                             if ((time.time() - notify_attempts.get(job_id, 0)) > RETRY_INTERVAL):
-                                ok = notify_job(curs=curs, job_id=job_id)
+                                ok = notify_and_delete_job(curs=curs, job_id=job_id)
                                 if ok:
-                                    curs.execute('UPDATE staging_jobs SET notified=true WHERE job_id=%s', (job_id,))
                                     mondb.commit()
                                     if job_id in notify_attempts:
                                         del notify_attempts[job_id]
@@ -443,9 +465,8 @@ def MonitorJobs(consumer):
                 rows = curs.fetchall()
                 for job_id, created, notify_url in rows:
                     if (datetime.datetime.now(timezone.utc) - created).seconds > EXPIRY_TIME:
-                        ok = notify_job(curs=curs, job_id=job_id)
+                        ok = notify_and_delete_job(curs=curs, job_id=job_id)
                         if ok:
-                            curs.execute('UPDATE staging_jobs SET notified=true WHERE job_id=%s', (job_id,))
                             if job_id in notify_attempts:
                                 del notify_attempts[job_id]
                         else:
@@ -461,8 +482,6 @@ def MonitorJobs(consumer):
                 LOGGER.debug('Updating heartbeat table')
                 curs.execute(UPDATE_HEARTBEAT_QUERY, (connection_alive, LAST_KAFKA_MESSAGE))
                 mondb.commit()
-
-                # TODO - add a query to check for and delete the job (and files) for old (already notified) jobs
 
                 LOGGER.debug('Sleeping')
                 time.sleep(CHECK_INTERVAL)  # Check job status at regular intervals

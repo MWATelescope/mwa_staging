@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS staging_jobs (
     created timestamp with time zone,
     completed boolean,                 -- True if all files have been staged
     total_files integer,
-    notified boolean,                  -- True if the notify_url callback has been called, successfully
+    notified boolean,                  -- Not used in the current version
     checked boolean,                   -- Not used in the current version
 
     PRIMARY KEY (job_id)

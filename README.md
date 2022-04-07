@@ -48,7 +48,9 @@ that file. The kafkad service connects to Kafka on boot, and as messages come
 through, it will mark each file as being staged. A separate thread in the kafkad 
 service continuously monitors the database and checks if all the files for a 
 particular request are "done" and if so, it will send a request to the specified 
-callback URL notifying it of this.
+callback URL notifying it of this. Once the caller has been successfully notified
+that the job is complete (or has timed out), the job will be deleted from the
+database.
 
 ## Installation
 - Download the repository
