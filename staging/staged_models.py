@@ -26,6 +26,24 @@ class NewJob(BaseModel):
     obs: Optional[Observation] = {}   # A telescope-specific structure defining an observation whose files you want staged
 
 
+class FileStatus(BaseModel):
+    """
+    Used by the 'File status' endpoint to pass in the a list of files.
+
+    files:       A list of filenames, including full paths\n
+    """
+    files: Optional[list[str]] = []   # A list of filenames, including full paths
+
+
+class FileStatusResult(BaseModel):
+    """
+    Used by the 'File status' endpoint to return the status of the queried files
+
+    allresults:   A dictionary with filename as key, and a boolean (True if the file is staged) as value
+    """
+    files: dict[str, bool] = {"":False}
+
+
 class JobResult(BaseModel):
     """
     Used by the dummy ASVO server endpoint to pass in the results of a job once all files are staged.
