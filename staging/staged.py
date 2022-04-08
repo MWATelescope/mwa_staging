@@ -218,6 +218,16 @@ def create_job(job: models.NewJob):
     else:
         db = staged_db.DBPOOL.getconn()
         try:
+            with db:
+                with db.cursor() as curs:
+                    curs.execute(staged_db.CREATE_JOB, (job.job_id,  # job_id
+                                                        job.notify_url,  # URL to call on success/failure
+                                                        datetime.datetime.now(timezone.utc),  # created
+                                                        len(pathlist)))  # total_files
+                    psycopg2.extras.execute_values(curs, staged_db.WRITE_FILES,
+                                                   [(job.job_id, f, False, False) for f in pathlist])
+            LOGGER.info('Job %d created.' % job.job_id)
+
             data = {'path': pathlist, 'copy': 0, 'inode': [], 'key':str(job.job_id), 'topic':config.KAFKA_TOPIC}
             result = requests.put(config.SCOUT_STAGE_URL, json=data, auth=ScoutAuth(get_scout_token()), verify=False)
             if result.status_code == 403:
@@ -225,20 +235,9 @@ def create_job(job: models.NewJob):
             LOGGER.debug('Got result for job %d from Scout API batchstage call: %d:%s' % (job.job_id, result.status_code, result.text))
 
             if result.status_code == 200:   # All files requested to be staged
-                with db:
-                    with db.cursor() as curs:
-                        curs.execute(staged_db.CREATE_JOB, (job.job_id,  # job_id
-                                                            job.notify_url,  # URL to call on success/failure
-                                                            datetime.datetime.now(timezone.utc),  # created
-                                                            len(pathlist)))  # total_files
-                        psycopg2.extras.execute_values(curs, staged_db.WRITE_FILES, [(job.job_id, f, False, False) for f in pathlist])
-                LOGGER.info('Job %d created.' % job.job_id)
+                LOGGER.info('Job %d - initial Scout staging call succeeded')
             else:
-                send_result(notify_url=job.notify_url,
-                            job_id=job.job_id,
-                            return_code=JOB_SCOUT_CALL_FAILED,
-                            comment='Scout API returned an error: %s' % result.text)
-                LOGGER.info('Job %d NOT created, Scout call failed: %s' % (job.job_id, result.text))
+                LOGGER.info('Job %d - initial Scout staging call failed: %s' % (job.job_id, result.text))
         except:
             exc_str = traceback.format_exc()
             send_result(notify_url=job.notify_url,
@@ -419,7 +418,7 @@ def delete_job(job_id: int, response:Response):
                 curs.execute(staged_db.QUERY_UNIQUE_FILES, (job_id, job_id))
                 pathlist = []
                 for row in curs:
-                    filename, ready, error, readytime = row
+                    filename = row[0]
                     pathlist.append(filename)
 
         LOGGER.info('Cancelling staging requests for %d files in job %d.' % (len(pathlist), job_id))
