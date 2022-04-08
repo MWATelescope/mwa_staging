@@ -488,7 +488,7 @@ def get_stats(response:Response):
                 kafkad_heartbeat, last_message, kafka_alive = curs.fetchall()[0]
                 curs.execute("SELECT count(*) FROM staging_jobs WHERE completed")
                 completed_jobs = curs.fetchall()[0][0]
-                curs.execute("SELECT count(*) FROM staging_jobs WHERE completed")
+                curs.execute("SELECT count(*) FROM staging_jobs WHERE not completed")
                 incomplete_jobs = curs.fetchall()[0][0]
                 curs.execute("SELECT count(*) FROM files WHERE ready")
                 ready_files = curs.fetchall()[0][0]
