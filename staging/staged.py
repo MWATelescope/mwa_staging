@@ -78,8 +78,8 @@ JOB_SUCCESS = 0                 # All files staged successfully
 JOB_TIMEOUT = 10                # Timeout waiting for all files to stage - comment field will contain number of staged and outstanding files
 JOB_FILE_LOOKUP_FAILED = 100    # Failed to look up files associated with the given observation (eg failure in metadata/data_files web service call)
 JOB_NO_FILES = 101              # No files to stage
-JOB_SCOUT_CALL_FAILED = 102     # Failure in call to Scout API to stage files
-JOB_SCOUT_FILE_NOT_FOUND = 103  # One or more of the files requested for staging were not found on the Scout filesystem
+# JOB_SCOUT_CALL_FAILED = 102     # Failure in call to Scout API to stage files
+# JOB_SCOUT_FILE_NOT_FOUND = 103  # One or more of the files requested for staging were not found on the Scout filesystem
 JOB_CREATION_EXCEPTION = 199    # An exception occurred while creating the job. Comment field will contain exception traceback
 
 DUMMY_TOKEN = "This is a real token, honest!"    # Used by the dummy Scout API endpoints
