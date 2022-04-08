@@ -73,9 +73,10 @@ LOGGER.addHandler(ch)
 # noinspection PyUnresolvedReferences
 requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
 
-CHECK_INTERVAL = 60    # Check all job status details once every minute.
-RETRY_INTERVAL = 600   # Re-try notifying ASVO about completed jobs every 10 minutes until we succeed
-EXPIRY_TIME = 86400    # Return an error if it's been more than a day since a job was staged, and it's still not finished.
+CHECK_INTERVAL = 60        # Check all job status details once every minute.
+RETRY_INTERVAL = 600       # Re-try notifying ASVO about completed jobs every 10 minutes until we succeed
+RESTAGE_INTERVAL = 21600   # Repeat the file staging request every 6 hours if a job isn't complete.
+EXPIRY_TIME = 86400 * 2    # Return an error if it's been more than 2 days since a job was staged, and it's still not finished.
 
 # All jobs that haven't been notified as finished, that have at least one 'ready' file
 COMPLETION_QUERY = """
@@ -118,6 +119,7 @@ class KafkadConfig():
         self.SCOUT_API_USER = os.getenv('SCOUT_API_USER')
         self.SCOUT_API_PASSWORD = os.getenv('SCOUT_API_PASSWORD')
         self.SCOUT_QUERY_URL = os.getenv('SCOUT_QUERY_URL')
+        self.SCOUT_STAGE_URL = os.getenv('SCOUT_STAGE_URL')
 
         self.DBUSER = os.getenv('DBUSER')
         self.DBPASSWORD = os.getenv('DBPASSWORD')
@@ -338,7 +340,7 @@ def HandleMessages(consumer):
             consumer.commit()   # Tell the Kafka server we've processed that message, so we don't see it again.
 
 
-def notify_and_delete_job(curs, job_id):
+def notify_and_delete_job(curs, job_id, force_delete=False):
     """
     Call the notify_url, and if that call is successful, delete the job and return True.
 
@@ -346,6 +348,7 @@ def notify_and_delete_job(curs, job_id):
 
     :param curs:  Psycopg2 cursor object
     :param job_id: integer job ID
+    :param force_delete: If True, delete the job even if the notify_url call failed
     :return:
     """
     try:
@@ -387,7 +390,8 @@ def notify_and_delete_job(curs, job_id):
         LOGGER.info('Job %d notified.' % job_id)
     else:
         LOGGER.error('Job %d failed to notify.')
-        return False
+        if not force_delete:
+            return False
 
     try:
         curs.execute("DELETE FROM files WHERE job_id = %s", (job_id,))
@@ -399,6 +403,42 @@ def notify_and_delete_job(curs, job_id):
         return False
 
 
+def restage_job(curs, job_id):
+    """
+    Ask Scout to stage all the files in this job, in case the original staging request was lost.
+
+    :param curs:   Psycopg2 cursor object
+    :param job_id: integer job ID
+    :return: True if Scout API called successfully.
+    """
+    pathlist = []
+    try:
+        curs.execute('SELECT filename from files where job_id=%s and not (ready or error)', (job_id,))
+        rows = curs.fetchall()
+        for row in rows:
+            pathlist.append(row[0])
+        data = {'path': pathlist, 'copy': 0, 'inode': [], 'key': str(job_id), 'topic': config.KAFKA_TOPIC}
+        result = requests.put(config.SCOUT_STAGE_URL,
+                              json=data,
+                              auth=ScoutAuth(get_scout_token()),
+                              verify=False)
+        if result.status_code == 403:
+            result = requests.put(config.SCOUT_STAGE_URL,
+                                  json=data,
+                                  auth=ScoutAuth(get_scout_token(refresh=True)),
+                                  verify=False)
+        LOGGER.debug('Got result for job %d from Scout API batchstage call: %d:%s' % (job_id, result.status_code, result.text))
+
+        if result.status_code == 200:  # All files requested to be staged
+            return True
+        else:
+            LOGGER.error('Got result code of %d from Scout re-stage request: %s' % (result.status_code, result.text))
+            return False
+    except:
+        LOGGER.error('Exception when re-staging files for job %d: %s' % (job_id, traceback.format_exc()))
+        return False
+
+
 def MonitorJobs(consumer):
     """
     Runs continously, keeping track of job progress, and notifying ASVO as jobs are completed, or
@@ -407,7 +447,9 @@ def MonitorJobs(consumer):
     Does not return.
     :return:
     """
-    notify_attempts = {}   # Dict with job_id as the key, and unix timestamp as the value for the last attempt
+    notify_attempts = {}    # Dict with job_id as the key, and unix timestamp as the value for the last attempt
+    restage_attempts = {}   # Dict with job_id as the key, and unix timestamp for the last time a 're-stage files' call
+                            # was made as the value
     mondb = psycopg2.connect(user=config.DBUSER,
                              password=config.DBPASSWORD,
                              host=config.DBHOST,
@@ -441,6 +483,7 @@ def MonitorJobs(consumer):
                                 mondb.commit()
                                 if job_id in notify_attempts:
                                     del notify_attempts[job_id]
+                                    del restage_attempts[job_id]
                             else:
                                 notify_attempts[job_id] = time.time()
                     else:
@@ -454,23 +497,32 @@ def MonitorJobs(consumer):
                                     mondb.commit()
                                     if job_id in notify_attempts:
                                         del notify_attempts[job_id]
+                                        del restage_attempts[job_id]
                                 else:
                                     notify_attempts[job_id] = time.time()
 
                 mondb.commit()
 
-                LOGGER.debug('Check to see if any jobs have timed out while waiting for completion')
-                # Loop over all uncompleted jobs, to see if any have timed-out and the client should be notified about the error
+                LOGGER.debug('Check to see if any jobs need re-staging, or have timed out while waiting for completion')
+                # Loop over all uncompleted jobs, to see if any need re-staging, or have timed and the client should be notified about the error
                 curs.execute("SELECT job_id, created, notify_url FROM staging_jobs WHERE NOT completed")
                 rows = curs.fetchall()
                 for job_id, created, notify_url in rows:
-                    if (datetime.datetime.now(timezone.utc) - created).seconds > EXPIRY_TIME:
-                        ok = notify_and_delete_job(curs=curs, job_id=job_id)
+                    job_age = (datetime.datetime.now(timezone.utc) - created).total_seconds()
+                    last_stage = min((time.time() - restage_attempts.get(job_id, 0)), job_age)
+                    LOGGER.debug("Job %d is %d seconds old, and was staged %d seconds ago." % (job_id, job_age, last_stage))
+                    if job_age > EXPIRY_TIME:
+                        ok = notify_and_delete_job(curs=curs, job_id=job_id, force_delete=True)
                         if ok:
                             if job_id in notify_attempts:
                                 del notify_attempts[job_id]
+                                del restage_attempts[job_id]
                         else:
                             notify_attempts[job_id] = time.time()
+                    elif (last_stage > RESTAGE_INTERVAL):
+                        ok = restage_job(curs=curs, job_id=job_id)
+                        if ok:
+                            restage_attempts[job_id] = time.time()
                 mondb.commit()
 
                 LOGGER.debug('Check to see if the Kafka daemon is still talking to us')
