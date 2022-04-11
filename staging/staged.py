@@ -61,6 +61,7 @@ class ApiConfig():
         self.SCOUT_API_USER = os.getenv('SCOUT_API_USER')
         self.SCOUT_API_PASSWORD = os.getenv('SCOUT_API_PASSWORD')
         self.SCOUT_QUERY_URL = os.getenv('SCOUT_QUERY_URL')
+        self.SCOUT_CACHESTATE_URL = os.getenv('SCOUT_CACHESTATE_URL')
 
         self.KAFKA_TOPIC = os.getenv('KAFKA_TOPIC')
 
@@ -514,6 +515,25 @@ def get_stats(response:Response):
                                          ready_files=ready_files,
                                          error_files=error_files,
                                          waiting_files=waiting_files)
+
+        LOGGER.info('Getting cache status ')
+        cache_result = requests.get(config.SCOUT_CACHESTATE_URL,
+                                    auth=ScoutAuth(get_scout_token()),
+                                    verify=False)
+        if cache_result.status_code == 401:
+            cache_result = requests.get(config.SCOUT_CACHESTATE_URL,
+                                        auth=ScoutAuth(get_scout_token(refresh=False)),
+                                        verify=False)
+        if cache_result.status_code == 200:
+            resdict = cache_result.json()
+            result.availdatasz = resdict.get('availdatasz', None)    # scoutfs available data capacity
+            result.health = resdict.get('health', None)              # scoutfs health of filesystem: 0-unknown, 1-ok, 2-warning, 3-error
+            result.healthstatus = resdict.get('healthstatus', None)  # scoutfs health status info string
+            result.releaseable = resdict.get('releaseable', None)    # scoutfs capacity of online files eligible for release (archive complete)
+            result.totdatasz = resdict.get('totdatasz', None)        # scoutfs total data capacity
+        else:
+            LOGGER.error('Got status code %d from Scout cache status call: %s' % (cache_result.status_code, cache_result.text))
+
         LOGGER.debug('Called get_stats: %s' % result)
         return result
     except Exception:

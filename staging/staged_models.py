@@ -110,14 +110,19 @@ class GlobalStatistics(BaseModel):
     ready_files: i      Total number of files staged so far\n
     unready_files:      Number of files we are waiting to be staged\n
     """
-    kafkad_heartbeat: Optional[float]  # Timestamp when kafkad.py last updated its status table
-    kafka_alive: bool = False          # Is the remote kafka daemon alive?
-    last_message: Optional[float]      # Timestamp when the last valid file status message was received
-    completed_jobs: int = 0            # Total number of jobs with all files staged
-    incomplete_jobs: int = 0           # Number of jobs waiting for files to be staged
-    ready_files: int = 0               # Total number of files staged successfully so far
-    error_files: int = 0               # Number of files for which Kafka reported an error
-    waiting_files: int = 0             # Number of files we have still waiting to be staged
+    kafkad_heartbeat: Optional[float]   # Timestamp when kafkad.py last updated its status table
+    kafka_alive: bool = False           # Is the remote kafka daemon alive?
+    last_message: Optional[float]       # Timestamp when the last valid file status message was received
+    completed_jobs: int = 0             # Total number of jobs with all files staged
+    incomplete_jobs: int = 0            # Number of jobs waiting for files to be staged
+    ready_files: int = 0                # Total number of files staged successfully so far
+    error_files: int = 0                # Number of files for which Kafka reported an error
+    waiting_files: int = 0              # Number of files we have still waiting to be staged
+    availdatasz: Optional[int]          # scoutfs available data capacity
+    health: Optional[int]               # scoutfs health of filesystem: 0-unknown, 1-ok, 2-warning, 3-error
+    healthstatus: Optional[str]         # scoutfs health status info string
+    releaseable: Optional[int]          # scoutfs capacity of online files eligible for release (archive complete)
+    totdatasz: Optional[int]            # scoutfs total data capacity
 
 
 class JobList(BaseModel):
