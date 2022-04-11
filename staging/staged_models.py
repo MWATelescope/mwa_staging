@@ -123,6 +123,8 @@ class GlobalStatistics(BaseModel):
     healthstatus: Optional[str]         # scoutfs health status info string
     releaseable: Optional[int]          # scoutfs capacity of online files eligible for release (archive complete)
     totdatasz: Optional[int]            # scoutfs total data capacity
+    nonreleaseable: Optional[int]       # scoutfs non-releaseable data size
+    pending: Optional[int]              # scoutfs size of data pending archiving
 
 
 class JobList(BaseModel):

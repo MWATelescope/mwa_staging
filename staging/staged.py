@@ -546,6 +546,8 @@ def get_stats(response:Response):
             result.health = sanitise(resdict.get('health', None))              # scoutfs health of filesystem: 0-unknown, 1-ok, 2-warning, 3-error
             result.healthstatus = resdict.get('healthstatus', None)            # scoutfs health status info string
             result.releaseable = sanitise(resdict.get('releaseable', None))    # scoutfs capacity of online files eligible for release (archive complete)
+            result.nonreleaseable = sanitise(resdict.get('nonreleaseable', None))    # scoutfs capacity of online files eligible for release (archive complete)
+            result.pending = sanitise(resdict.get('pending', None))    # scoutfs capacity of online files eligible for release (archive complete)
             result.totdatasz = sanitise(resdict.get('totdatasz', None))        # scoutfs total data capacity
         else:
             LOGGER.error('Got status code %d from Scout cache status call: %s' % (cache_result.status_code, cache_result.text))
