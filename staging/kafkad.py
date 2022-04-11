@@ -133,7 +133,7 @@ class KafkadConfig():
 config = KafkadConfig()
 
 # When the most recent valid Kafka file status message was processed
-LAST_KAFKA_MESSAGE = None
+LAST_KAFKA_MESSAGE = datetime.datetime.utcnow()
 
 SCOUT_API_TOKEN = ''
 

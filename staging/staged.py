@@ -515,11 +515,11 @@ def get_stats(response:Response):
                 waiting_files = curs.fetchall()[0][0]
 
         if kafkad_heartbeat is not None:
-            hb = kafkad_heartbeat.timestamp()
+            hb = int(kafkad_heartbeat.timestamp())
         else:
             hb = None
         if last_message is not None:
-            lm = last_message.timestamp()
+            lm = int(last_message.timestamp())
         else:
             lm = None
 
