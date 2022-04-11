@@ -236,7 +236,7 @@ def create_job(job: models.NewJob):
             LOGGER.debug('Got result for job %d from Scout API batchstage call: %d:%s' % (job.job_id, result.status_code, result.text))
 
             if result.status_code == 200:   # All files requested to be staged
-                LOGGER.info('Job %d - initial Scout staging call succeeded')
+                LOGGER.info('Job %d - initial Scout staging call succeeded' % job.job_id)
             else:
                 LOGGER.info('Job %d - initial Scout staging call failed: %s' % (job.job_id, result.text))
         except:
