@@ -271,14 +271,11 @@ def process_message(msg, db):
     :param db: Database connection object
     :return: Number of rows updated in the files table
     """
-    global LAST_KAFKA_MESSAGE
     filename = msg.value.get('Filename', None)
     errors = msg.value.get('Error', '')
     if not filename:
         LOGGER.error("Invalid Kafka message, no 'Filename': %s" % msg.value)
         return '', 0
-
-    LAST_KAFKA_MESSAGE = datetime.datetime.utcnow()
 
     if not errors:
         # If a file (in another job) was already 'ready', don't change the readytime value
@@ -322,6 +319,7 @@ def HandleMessages(consumer):
 
     :return:
     """
+    global LAST_KAFKA_MESSAGE
     msgdb = psycopg2.connect(user=config.DBUSER,
                              password=config.DBPASSWORD,
                              host=config.DBHOST,
@@ -331,6 +329,7 @@ def HandleMessages(consumer):
             filename, rowcount = process_message(msg, msgdb)
             if rowcount:
                 LOGGER.info('File %s staged, updated %d rows in files table' % (filename, rowcount))
+                LAST_KAFKA_MESSAGE = datetime.datetime.utcnow()
             else:
                 LOGGER.debug('Unknown file: %s' % filename)
         except:
@@ -454,17 +453,6 @@ def MonitorJobs(consumer):
                              password=config.DBPASSWORD,
                              host=config.DBHOST,
                              database=config.DBNAME)
-
-    # TODO - remove this after it's run once, to delete legacy jobs
-    with mondb:
-        with mondb.cursor() as curs:
-            curs.execute("SELECT job_id from staging_jobs where notified")
-            rows = curs.fetchall()
-            for row in rows:
-                job_id = row[0]
-                curs.execute("DELETE FROM files WHERE job_id = %s", (job_id,))
-                curs.execute("DELETE FROM staging_jobs WHERE job_id = %s", (job_id,))
-                LOGGER.info('Previously notified job %d DELETED.' % job_id)
 
     while True:
         with mondb:
