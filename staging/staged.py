@@ -466,6 +466,22 @@ def ping():
     return
 
 
+def sanitise(value):
+    """
+    Take a value returned from Scout, and if it's not None, convert from string to integer.
+
+    :param value: String representation of an integer, or None
+    :return: integer, or None
+    """
+    if value is not None:
+        try:
+            return int(value)
+        except ValueError:
+            return value
+    else:
+        return None
+
+
 @app.get("/get_stats/",
          status_code=status.HTTP_200_OK,
          responses={200:{'model':models.GlobalStatistics}, 500:{'model':models.ErrorResult}})
@@ -526,11 +542,11 @@ def get_stats(response:Response):
                                         verify=False)
         if cache_result.status_code == 200:
             resdict = cache_result.json()
-            result.availdatasz = resdict.get('availdatasz', None)    # scoutfs available data capacity
-            result.health = resdict.get('health', None)              # scoutfs health of filesystem: 0-unknown, 1-ok, 2-warning, 3-error
-            result.healthstatus = resdict.get('healthstatus', None)  # scoutfs health status info string
-            result.releaseable = resdict.get('releaseable', None)    # scoutfs capacity of online files eligible for release (archive complete)
-            result.totdatasz = resdict.get('totdatasz', None)        # scoutfs total data capacity
+            result.availdatasz = sanitise(resdict.get('availdatasz', None))    # scoutfs available data capacity
+            result.health = sanitise(resdict.get('health', None))              # scoutfs health of filesystem: 0-unknown, 1-ok, 2-warning, 3-error
+            result.healthstatus = resdict.get('healthstatus', None)            # scoutfs health status info string
+            result.releaseable = sanitise(resdict.get('releaseable', None))    # scoutfs capacity of online files eligible for release (archive complete)
+            result.totdatasz = sanitise(resdict.get('totdatasz', None))        # scoutfs total data capacity
         else:
             LOGGER.error('Got status code %d from Scout cache status call: %s' % (cache_result.status_code, cache_result.text))
 
