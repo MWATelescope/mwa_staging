@@ -162,9 +162,10 @@ it easier to adapt this code for a different telescope.
 ### PostgreSQL & PG Admin
 We make use of a local PostgreSQL server to store records related to staging 
 jobs and their associated files. You can view the table definitions in 
-./postgres/tabledefs.sql. Once your stack is running, you can visit 
-http://localhost:5050 to access the locally running PG Admin, which will 
-provide a UI to view and interact with the database. 
+./postgres/tabledefs.sql. Once your stack (development, not production) 
+stack is running, you can visit http://localhost:5050 to access the locally 
+running PG Admin, which will provide a UI to view and interact with the 
+database. 
 
 ### NGINX
 We use NGINX as a reverse proxy, which will direct traffic to the various 
