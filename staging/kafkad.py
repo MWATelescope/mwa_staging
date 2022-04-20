@@ -335,7 +335,7 @@ def HandleMessages(consumer):
                 LOGGER.info('File %s staged, updated %d rows in files table' % (filename, rowcount))
                 LAST_KAFKA_MESSAGE = datetime.datetime.utcnow()
             else:
-                LOGGER.debug('Unknown file: %s' % filename)
+                LOGGER.debug('Unknown file sent to topic %s, partition %s, key %s: %s' % (msg.topic, msg.partition, msg.key, filename))
         except:
             LOGGER.error(traceback.format_exc())
             return
