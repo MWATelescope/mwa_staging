@@ -28,27 +28,11 @@ import staged_db
 # noinspection PyUnresolvedReferences
 requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
 
-LOGLEVEL_LOGFILE = logging.DEBUG   # All messages will be sent to the log file
-LOGLEVEL_CONSOLE = logging.INFO    # INFO and above will be printed to STDOUT as well as the logfile
-LOGFILE = "/var/log/staging/staged.log"
-
-LOGGER = logging.getLogger('staged')
-LOGGER.setLevel(logging.DEBUG)     # Overridden by the log levels in the file and console handler, if they are less permissive
-
-fh = handlers.RotatingFileHandler(LOGFILE, maxBytes=100000000, backupCount=5)  # 100 Mb per file, max of five old log files
-fh.setLevel(LOGLEVEL_LOGFILE)
-fh.setFormatter(logging.Formatter(fmt='[%(asctime)s %(levelname)s] %(message)s'))
-LOGGER.addHandler(fh)
-
-ch = logging.StreamHandler()
-ch.setLevel(LOGLEVEL_CONSOLE)
-ch.setFormatter(logging.Formatter(fmt='[%(asctime)s %(levelname)s] %(message)s'))
-LOGGER.addHandler(ch)
-
 
 class ApiConfig():
     """Config class, used to load configuration data from environment variables.
     """
+
     def __init__(self):
         self.DBUSER = os.getenv('DBUSER')
         self.DBPASSWORD = os.getenv('DBPASSWORD')
@@ -63,6 +47,8 @@ class ApiConfig():
         self.SCOUT_QUERY_URL = os.getenv('SCOUT_QUERY_URL')
         self.SCOUT_CACHESTATE_URL = os.getenv('SCOUT_CACHESTATE_URL')
 
+        self.STAGING_LOGDIR = os.getenv('STAGING_LOGDIR', '/tmp')
+
         self.KAFKA_TOPIC = os.getenv('KAFKA_TOPIC')
 
         self.RESULT_USERNAME = os.getenv('RESULT_USERNAME')
@@ -70,6 +56,24 @@ class ApiConfig():
 
 
 config = ApiConfig()
+
+LOGLEVEL_LOGFILE = logging.DEBUG   # All messages will be sent to the log file
+LOGLEVEL_CONSOLE = logging.INFO    # INFO and above will be printed to STDOUT as well as the logfile
+LOGFILE = os.path.join(config.STAGING_LOGDIR, "staged.log")
+
+LOGGER = logging.getLogger('staged')
+LOGGER.setLevel(logging.DEBUG)     # Overridden by the log levels in the file and console handler, if they are less permissive
+
+fh = handlers.RotatingFileHandler(LOGFILE, maxBytes=100000000, backupCount=5)  # 100 Mb per file, max of five old log files
+fh.setLevel(LOGLEVEL_LOGFILE)
+fh.setFormatter(logging.Formatter(fmt='[%(asctime)s %(levelname)s] %(message)s'))
+LOGGER.addHandler(fh)
+
+ch = logging.StreamHandler()
+ch.setLevel(LOGLEVEL_CONSOLE)
+ch.setFormatter(logging.Formatter(fmt='[%(asctime)s %(levelname)s] %(message)s'))
+LOGGER.addHandler(ch)
+
 
 SCOUT_API_TOKEN = ''
 

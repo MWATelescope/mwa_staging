@@ -53,9 +53,41 @@ import requests
 from requests.auth import AuthBase
 from kafka import errors, KafkaConsumer
 
+
+class KafkadConfig():
+    """Config class, used to load configuration data from environment variables.
+    """
+    def __init__(self):
+        self.KAFKA_TOPIC = os.getenv('KAFKA_TOPIC')
+        self.KAFKA_SERVER = os.getenv('KAFKA_SERVER')
+        self.KAFKA_USER = os.getenv('KAFKA_USER')
+        self.KAFKA_PASSWORD = os.getenv('KAFKA_PASSWORD')
+
+        self.SCOUT_LOGIN_URL = os.getenv('SCOUT_LOGIN_URL')
+        self.SCOUT_API_USER = os.getenv('SCOUT_API_USER')
+        self.SCOUT_API_PASSWORD = os.getenv('SCOUT_API_PASSWORD')
+        self.SCOUT_QUERY_URL = os.getenv('SCOUT_QUERY_URL')
+        self.SCOUT_STAGE_URL = os.getenv('SCOUT_STAGE_URL')
+
+        self.STAGING_LOGDIR = os.getenv('STAGING_LOGDIR', '/tmp')
+
+        self.DBUSER = os.getenv('DBUSER')
+        self.DBPASSWORD = os.getenv('DBPASSWORD')
+        self.DBHOST = os.getenv('DBHOST')
+        self.DBNAME = os.getenv('DBNAME')
+
+        self.RESULT_USERNAME = os.getenv('RESULT_USERNAME')
+        self.RESULT_PASSWORD = os.getenv('RESULT_PASSWORD')
+
+        self.FILE_RESTAGE_INTERVAL = int(os.getenv('FILE_RESTAGE_INTERVAL', '21600'))   # Repeat file staging request if a job isn't complete.
+        self.JOB_EXPIRY_TIME = int(os.getenv('JOB_EXPIRY_TIME', '172800'))
+
+
+config = KafkadConfig()
+
 LOGLEVEL_LOGFILE = logging.DEBUG   # All messages will be sent to the log file
 LOGLEVEL_CONSOLE = logging.INFO    # INFO and above will be printed to STDOUT as well as the logfile
-LOGFILE = "/var/log/staging/kafkad.log"
+LOGFILE = os.path.join(config.STAGING_LOGDIR, "kafkad.log")
 
 LOGGER = logging.getLogger('kafkad')
 LOGGER.setLevel(logging.DEBUG)     # Overridden by the log levels in the file and console handler, if they are less permissive
@@ -75,8 +107,6 @@ requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
 
 CHECK_INTERVAL = 60        # Check all job status details once every minute.
 RETRY_INTERVAL = 600       # Re-try notifying ASVO about completed jobs every 10 minutes until we succeed
-RESTAGE_INTERVAL = 21600   # Repeat the file staging request every 6 hours if a job isn't complete.
-EXPIRY_TIME = 86400 * 2    # Return an error if it's been more than 2 days since a job was staged, and it's still not finished.
 
 # All jobs that haven't been notified as finished, that have at least one 'ready' file
 COMPLETION_QUERY = """
@@ -105,32 +135,6 @@ SET update_time = now(),
 WHERE true
 """
 
-
-class KafkadConfig():
-    """Config class, used to load configuration data from environment variables.
-    """
-    def __init__(self):
-        self.KAFKA_TOPIC = os.getenv('KAFKA_TOPIC')
-        self.KAFKA_SERVER = os.getenv('KAFKA_SERVER')
-        self.KAFKA_USER = os.getenv('KAFKA_USER')
-        self.KAFKA_PASSWORD = os.getenv('KAFKA_PASSWORD')
-
-        self.SCOUT_LOGIN_URL = os.getenv('SCOUT_LOGIN_URL')
-        self.SCOUT_API_USER = os.getenv('SCOUT_API_USER')
-        self.SCOUT_API_PASSWORD = os.getenv('SCOUT_API_PASSWORD')
-        self.SCOUT_QUERY_URL = os.getenv('SCOUT_QUERY_URL')
-        self.SCOUT_STAGE_URL = os.getenv('SCOUT_STAGE_URL')
-
-        self.DBUSER = os.getenv('DBUSER')
-        self.DBPASSWORD = os.getenv('DBPASSWORD')
-        self.DBHOST = os.getenv('DBHOST')
-        self.DBNAME = os.getenv('DBNAME')
-
-        self.RESULT_USERNAME = os.getenv('RESULT_USERNAME')
-        self.RESULT_PASSWORD = os.getenv('RESULT_PASSWORD')
-
-
-config = KafkadConfig()
 
 # When the most recent valid Kafka file status message was processed
 LAST_KAFKA_MESSAGE = datetime.datetime.utcnow()
@@ -373,7 +377,7 @@ def notify_and_delete_job(curs, job_id, force_delete=False):
                                                                                                       error_files)
     else:
         return_code = JOB_TIMEOUT
-        comment = 'Job timed out after %d seconds. Out of %d files in total, %d staged successfully, and %d files had errors' % (EXPIRY_TIME,
+        comment = 'Job timed out after %d seconds. Out of %d files in total, %d staged successfully, and %d files had errors' % (config.JOB_EXPIRY_TIME,
                                                                                                                                  total_files,
                                                                                                                                  ready_files,
                                                                                                                                  error_files)
@@ -499,7 +503,7 @@ def MonitorJobs(consumer):
                     job_age = (datetime.datetime.now(timezone.utc) - created).total_seconds()
                     last_stage = min((time.time() - restage_attempts.get(job_id, 0)), job_age)
                     LOGGER.debug("Job %d is %d seconds old, and was staged %d seconds ago." % (job_id, job_age, last_stage))
-                    if job_age > EXPIRY_TIME:
+                    if job_age > config.JOB_EXPIRY_TIME:
                         ok = notify_and_delete_job(curs=curs, job_id=job_id, force_delete=True)
                         if ok:
                             if job_id in notify_attempts:
@@ -507,7 +511,7 @@ def MonitorJobs(consumer):
                                 del restage_attempts[job_id]
                         else:
                             notify_attempts[job_id] = time.time()
-                    elif (last_stage > RESTAGE_INTERVAL):
+                    elif (last_stage > config.FILE_RESTAGE_INTERVAL):
                         ok = restage_job(curs=curs, job_id=job_id)
                         if ok:
                             restage_attempts[job_id] = time.time()
