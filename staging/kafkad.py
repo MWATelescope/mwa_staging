@@ -533,29 +533,33 @@ def MonitorJobs(consumer):
 
 
 if __name__ == '__main__':
-    try:
-        ssl_settings = ssl.SSLContext(ssl.PROTOCOL_TLS)
-        ssl_settings.verify_mode = ssl.CERT_NONE
+    while True:
+        try:
+            ssl_settings = ssl.SSLContext(ssl.PROTOCOL_TLS)
+            ssl_settings.verify_mode = ssl.CERT_NONE
 
-        consumer = KafkaConsumer(config.KAFKA_TOPIC,
-                                 bootstrap_servers=[config.KAFKA_SERVER],
-                                 auto_offset_reset='earliest',
-                                 enable_auto_commit=False,
-                                 group_id='mwagroup',
-                                 sasl_mechanism='SCRAM-SHA-256',
-                                 sasl_plain_username=config.KAFKA_USER,
-                                 sasl_plain_password=config.KAFKA_PASSWORD,
-                                 security_protocol='SASL_SSL',
-                                 ssl_context=ssl_settings,
-                                 value_deserializer=lambda x: json.loads(x.decode('utf-8')))
-        LOGGER.info('Connected to Kafka server.')
-        # Start the thread that monitors job state and sends completion notifications as necessary
-        jobthread = threading.Thread(target=MonitorJobs, name='MonitorJobs', args=(consumer,))
-        jobthread.daemon = True  # Stop this thread when the main program exits.
-        jobthread.start()
+            consumer = KafkaConsumer(config.KAFKA_TOPIC,
+                                     bootstrap_servers=[config.KAFKA_SERVER],
+                                     auto_offset_reset='earliest',
+                                     enable_auto_commit=False,
+                                     group_id='mwagroup',
+                                     sasl_mechanism='SCRAM-SHA-256',
+                                     sasl_plain_username=config.KAFKA_USER,
+                                     sasl_plain_password=config.KAFKA_PASSWORD,
+                                     security_protocol='SASL_SSL',
+                                     ssl_context=ssl_settings,
+                                     value_deserializer=lambda x: json.loads(x.decode('utf-8')))
+            LOGGER.info('Connected to Kafka server.')
+            # Start the thread that monitors job state and sends completion notifications as necessary
+            jobthread = threading.Thread(target=MonitorJobs, name='MonitorJobs', args=(consumer,))
+            jobthread.daemon = True  # Stop this thread when the main program exits.
+            jobthread.start()
 
-        # Start processing Kafka messages
-        HandleMessages(consumer)  # Never exits.
-    except errors.NoBrokersAvailable as e:
-        LOGGER.error('Unable to connect to Kafka server.')
-        LOGGER.error(e)
+            # Start processing Kafka messages
+            HandleMessages(consumer)  # Never exits.
+        except errors.NoBrokersAvailable as e:
+            LOGGER.error('Unable to connect to Kafka server.')
+            LOGGER.error(e)
+
+        LOGGER.info('Sleeping for 5 minutes, waiting for the Kafka server to come back.')
+        time.sleep(300)
