@@ -6,6 +6,7 @@ This file implements the REST API for accepting requests from ASVO, and another 
 """
 
 import datetime
+import ssl
 from datetime import timezone
 import os
 import logging
@@ -243,6 +244,8 @@ def create_job(job: models.NewJob):
                 LOGGER.info('Job %d - initial Scout staging call succeeded' % job.job_id)
             else:
                 LOGGER.info('Job %d - initial Scout staging call failed: %s' % (job.job_id, result.text))
+        except ssl.SSLEOFError:
+            LOGGER.error('Scout server not responding to %s increate_job' % config.SCOUT_STAGE_URL)
         except:
             exc_str = traceback.format_exc()
             send_result(notify_url=job.notify_url,
@@ -537,24 +540,27 @@ def get_stats(response:Response):
                                          waiting_files=waiting_files)
 
         LOGGER.info('Getting cache status ')
-        cache_result = requests.get(config.SCOUT_CACHESTATE_URL,
-                                    auth=ScoutAuth(get_scout_token()),
-                                    verify=False)
-        if cache_result.status_code == 401:
+        try:
             cache_result = requests.get(config.SCOUT_CACHESTATE_URL,
-                                        auth=ScoutAuth(get_scout_token(refresh=False)),
+                                        auth=ScoutAuth(get_scout_token()),
                                         verify=False)
-        if cache_result.status_code == 200:
-            resdict = cache_result.json()
-            result.availdatasz = sanitise(resdict.get('availdatasz', None))    # scoutfs available data capacity
-            result.health = sanitise(resdict.get('health', None))              # scoutfs health of filesystem: 0-unknown, 1-ok, 2-warning, 3-error
-            result.healthstatus = resdict.get('healthstatus', None)            # scoutfs health status info string
-            result.releaseable = sanitise(resdict.get('releaseable', None))    # scoutfs capacity of online files eligible for release (archive complete)
-            result.nonreleaseable = sanitise(resdict.get('nonreleaseable', None))    # scoutfs capacity of online files eligible for release (archive complete)
-            result.pending = sanitise(resdict.get('pending', None))    # scoutfs capacity of online files eligible for release (archive complete)
-            result.totdatasz = sanitise(resdict.get('totdatasz', None))        # scoutfs total data capacity
-        else:
-            LOGGER.error('Got status code %d from Scout cache status call: %s' % (cache_result.status_code, cache_result.text))
+            if cache_result.status_code == 401:
+                cache_result = requests.get(config.SCOUT_CACHESTATE_URL,
+                                            auth=ScoutAuth(get_scout_token(refresh=False)),
+                                            verify=False)
+            if cache_result.status_code == 200:
+                resdict = cache_result.json()
+                result.availdatasz = sanitise(resdict.get('availdatasz', None))    # scoutfs available data capacity
+                result.health = sanitise(resdict.get('health', None))              # scoutfs health of filesystem: 0-unknown, 1-ok, 2-warning, 3-error
+                result.healthstatus = resdict.get('healthstatus', None)            # scoutfs health status info string
+                result.releaseable = sanitise(resdict.get('releaseable', None))    # scoutfs capacity of online files eligible for release (archive complete)
+                result.nonreleaseable = sanitise(resdict.get('nonreleaseable', None))    # scoutfs capacity of online files eligible for release (archive complete)
+                result.pending = sanitise(resdict.get('pending', None))    # scoutfs capacity of online files eligible for release (archive complete)
+                result.totdatasz = sanitise(resdict.get('totdatasz', None))        # scoutfs total data capacity
+            else:
+                LOGGER.error('Got status code %d from Scout cache status call: %s' % (cache_result.status_code, cache_result.text))
+        except ssl.SSLEOFError:   # Scout server not available
+            LOGGER.error('Scout server not responding to %s in get_stats endpoint' % config.SCOUT_CACHESTATE_URL)
 
         LOGGER.debug('Called get_stats: %s' % result)
         return result
