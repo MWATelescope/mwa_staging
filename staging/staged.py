@@ -14,6 +14,7 @@ from logging import handlers
 import traceback
 
 import psycopg2
+import urllib3.exceptions
 from psycopg2 import extras
 
 from fastapi import FastAPI, BackgroundTasks, Query, Request, Response, status
@@ -559,7 +560,7 @@ def get_stats(response:Response):
                 result.totdatasz = sanitise(resdict.get('totdatasz', None))        # scoutfs total data capacity
             else:
                 LOGGER.error('Got status code %d from Scout cache status call: %s' % (cache_result.status_code, cache_result.text))
-        except ssl.SSLEOFError:   # Scout server not available
+        except (ssl.SSLEOFError, urllib3.exceptions.MaxRetryError, requests.exceptions.SSLError):   # Scout server not available
             LOGGER.error('Scout server not responding to %s in get_stats endpoint' % config.SCOUT_CACHESTATE_URL)
 
         LOGGER.debug('Called get_stats: %s' % result)
