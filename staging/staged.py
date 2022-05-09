@@ -545,7 +545,7 @@ def get_stats(response:Response):
             cache_result = requests.get(config.SCOUT_CACHESTATE_URL,
                                         auth=ScoutAuth(get_scout_token()),
                                         verify=False)
-            if cache_result.status_code == 401:
+            if cache_result.status_code == 403:
                 cache_result = requests.get(config.SCOUT_CACHESTATE_URL,
                                             auth=ScoutAuth(get_scout_token(refresh=False)),
                                             verify=False)
@@ -641,7 +641,7 @@ async def file_status(data: models.FileStatus, response: Response):
             LOGGER.info('Getting status for %s' % str(filename))
             result = requests.get(config.SCOUT_QUERY_URL, params={'path': filename}, auth=ScoutAuth(get_scout_token()),
                                   verify=False)
-            if result.status_code == 401:
+            if result.status_code == 403:
                 result = requests.get(config.SCOUT_QUERY_URL, params={'path': filename},
                                       auth=ScoutAuth(get_scout_token(refresh=False)), verify=False)
             if result.status_code != 200:
