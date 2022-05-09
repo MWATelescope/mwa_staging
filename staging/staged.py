@@ -245,7 +245,7 @@ def create_job(job: models.NewJob):
                 LOGGER.info('Job %d - initial Scout staging call succeeded' % job.job_id)
             else:
                 LOGGER.info('Job %d - initial Scout staging call failed: %s' % (job.job_id, result.text))
-        except ssl.SSLEOFError:
+        except (ssl.SSLEOFError, urllib3.exceptions.MaxRetryError, requests.exceptions.SSLError):  # Scout server not available
             LOGGER.error('Scout server not responding to %s increate_job' % config.SCOUT_STAGE_URL)
         except:
             exc_str = traceback.format_exc()
