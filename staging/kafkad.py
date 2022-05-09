@@ -305,7 +305,7 @@ def is_file_ready(filename):
     :return bool: True if the file is staged and ready.
     """
     result = requests.get(config.SCOUT_QUERY_URL, params={'path':filename}, auth=ScoutAuth(get_scout_token()), verify=False)
-    if result.status_code == 401:
+    if result.status_code == 403:
         result = requests.get(config.SCOUT_QUERY_URL, params={'path': filename}, auth=ScoutAuth(get_scout_token(refresh=False)), verify=False)
     resdict = result.json()
     offlineblocks = resdict.get('offlineblocks', None)
