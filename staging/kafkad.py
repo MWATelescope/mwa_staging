@@ -421,23 +421,37 @@ def restage_job(curs, job_id):
         rows = curs.fetchall()
         for row in rows:
             pathlist.append(row[0])
-        data = {'path': pathlist, 'copy': 0, 'inode': [], 'key': str(job_id), 'topic': config.KAFKA_TOPIC}
-        result = requests.put(config.SCOUT_STAGE_URL,
-                              json=data,
-                              auth=ScoutAuth(get_scout_token()),
-                              verify=False)
-        if result.status_code == 403:
+
+        ok = True
+        status_code, result_text = 0, ''
+        # Split filenames into groups of 10000, to avoid a request size > 4 MB
+        for fgroup in range(1 + int(len(pathlist)) // 10000):
+            grouplist = pathlist[fgroup * 10000:fgroup * 10000 + 10000]
+            data = {'path': grouplist, 'copy': 0, 'inode': [], 'key': str(job_id), 'topic': config.KAFKA_TOPIC}
             result = requests.put(config.SCOUT_STAGE_URL,
                                   json=data,
-                                  auth=ScoutAuth(get_scout_token(refresh=True)),
+                                  auth=ScoutAuth(get_scout_token()),
                                   verify=False)
-        LOGGER.debug('Got result for job %d from Scout API batchstage call: %d:%s' % (job_id, result.status_code, result.text))
+            if result.status_code == 403:
+                result = requests.put(config.SCOUT_STAGE_URL,
+                                      json=data,
+                                      auth=ScoutAuth(get_scout_token(refresh=True)),
+                                      verify=False)
+            status_code, result_text = result.status_code, result.text
+            LOGGER.debug('Got result for staging call %d for job %d from Scout API batchstage call: %d:%s' % (fgroup + 1, job_id, status_code, result_text))
 
-        if result.status_code == 200:  # All files requested to be staged
+            if status_code != 200:  # Error requesting files to be staged
+                LOGGER.error('Got result code of %d from Scout re-stage request: %s' % (result.status_code, result.text))
+                ok = False
+
+        if ok:  # All files requested to be staged
             return True
         else:
-            LOGGER.error('Got result code of %d from Scout re-stage request: %s' % (result.status_code, result.text))
+            LOGGER.error('Got result code of %d from Scout re-stage request: %s' % (status_code, result_text))
             return False
+    except (ssl.SSLEOFError, urllib3.exceptions.MaxRetryError, requests.exceptions.SSLError):  # Scout server not available
+        LOGGER.error('Scout server not responding to %s in restage_job' % config.SCOUT_STAGE_URL)
+        return False
     except:
         LOGGER.error('Exception when re-staging files for job %d: %s' % (job_id, traceback.format_exc()))
         return False

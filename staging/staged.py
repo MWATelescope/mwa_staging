@@ -235,18 +235,21 @@ def create_job(job: models.NewJob):
                                                    [(job.job_id, f, False, False) for f in pathlist])
             LOGGER.info('Job %d created.' % job.job_id)
 
-            data = {'path': pathlist, 'copy': 0, 'inode': [], 'key':str(job.job_id), 'topic':config.KAFKA_TOPIC}
-            result = requests.put(config.SCOUT_STAGE_URL, json=data, auth=ScoutAuth(get_scout_token()), verify=False)
-            if result.status_code == 403:
-                result = requests.put(config.SCOUT_STAGE_URL, json=data, auth=ScoutAuth(get_scout_token(refresh=True)), verify=False)
-            LOGGER.debug('Got result for job %d from Scout API batchstage call: %d:%s' % (job.job_id, result.status_code, result.text))
+            # Split filenames into groups of 10000, to avoid a request size > 4 MB
+            for fgroup in range(1 + int(len(pathlist)) // 10000):
+                grouplist = pathlist[fgroup * 10000:fgroup * 10000 + 10000]
+                data = {'path': grouplist, 'copy': 0, 'inode': [], 'key':str(job.job_id), 'topic':config.KAFKA_TOPIC}
+                result = requests.put(config.SCOUT_STAGE_URL, json=data, auth=ScoutAuth(get_scout_token()), verify=False)
+                if result.status_code == 403:
+                    result = requests.put(config.SCOUT_STAGE_URL, json=data, auth=ScoutAuth(get_scout_token(refresh=True)), verify=False)
+                LOGGER.debug('Got result for staging call %d for job %d from Scout API batchstage call: %d:%s' % (fgroup + 1, job.job_id, result.status_code, result.text))
 
-            if result.status_code == 200:   # All files requested to be staged
-                LOGGER.info('Job %d - initial Scout staging call succeeded' % job.job_id)
-            else:
-                LOGGER.info('Job %d - initial Scout staging call failed: %s' % (job.job_id, result.text))
+                if result.status_code == 200:   # All files in the current file group requested to be staged
+                    LOGGER.info('Job %d - initial Scout staging number call #%d succeeded' % (job.job_id, fgroup + 1))
+                else:
+                    LOGGER.info('Job %d - initial Scout staging call #%d failed: %s' % (job.job_id, fgroup + 1, result.text))
         except (ssl.SSLEOFError, urllib3.exceptions.MaxRetryError, requests.exceptions.SSLError):  # Scout server not available
-            LOGGER.error('Scout server not responding to %s increate_job' % config.SCOUT_STAGE_URL)
+            LOGGER.error('Scout server not responding to %s in create_job' % config.SCOUT_STAGE_URL)
         except:
             exc_str = traceback.format_exc()
             send_result(notify_url=job.notify_url,
