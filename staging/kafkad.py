@@ -393,7 +393,7 @@ def notify_and_delete_job(curs, job_id, force_delete=False):
     if ok:
         LOGGER.info('Job %d notified.' % job_id)
     else:
-        LOGGER.error('Job %d failed to notify.')
+        LOGGER.error('Job %d failed to notify.' % job_id)
         if not force_delete:
             return False
 
