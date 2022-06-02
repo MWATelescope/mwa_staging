@@ -311,9 +311,10 @@ def is_file_ready(filename):
     offlineblocks = resdict.get('offlineblocks', None)
     if offlineblocks is None:
         LOGGER.error("Unexpected status return from Scout API for file %s: %s" % (filename, resdict))
+        return None
     else:
         LOGGER.debug('Got status for file %s: Ready=%s' % (filename, int(offlineblocks) == 0))
-    return int(offlineblocks) == 0
+        return int(offlineblocks) == 0
 
 
 def HandleMessages(consumer):

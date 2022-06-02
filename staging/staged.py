@@ -653,8 +653,8 @@ async def file_status(data: models.FileStatus, response: Response):
                 return models.ErrorResult(errormsg="Scout call failed during a file status request: %d:%s" % (result.status_code, result.text))
 
             resdict = result.json()
-            offlineblocks = resdict.get('offlineblocks', None)
-            allresults[filename] = (offlineblocks == 0)
+            offlineblocks = resdict.get('offlineblocks', '99999999')
+            allresults[filename] = (int(offlineblocks) == 0)
         return allresults
     except Exception:  # Any other errors
         response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
