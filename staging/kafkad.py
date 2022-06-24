@@ -279,7 +279,7 @@ def process_message(msg, db):
     errors = msg.value.get('Error', '')
     if not filename:
         LOGGER.error("Invalid Kafka message, no 'Filename': %s" % msg.value)
-        return '', 0
+        return '', 0, ''
 
     if not errors:
         # If a file (in another job) was already 'ready', don't change the readytime value
@@ -287,14 +287,14 @@ def process_message(msg, db):
         with db:
             with db.cursor() as curs:
                 curs.execute(query, (filename,))
-                return filename, curs.rowcount
+                return filename, curs.rowcount, errors
     else:
         # If a file (in another job) was already 'error', don't change the readytime value
         query = "UPDATE files SET error=true, ready=false, readytime=now() WHERE filename=%s and not error"
         with db:
             with db.cursor() as curs:
                 curs.execute(query, (filename,))
-                return filename, curs.rowcount
+                return filename, curs.rowcount, errors
 
 
 def is_file_ready(filename):
@@ -331,13 +331,15 @@ def HandleMessages(consumer):
                              database=config.DBNAME)
     for msg in consumer:
         try:
-            filename, rowcount = process_message(msg, msgdb)
+            filename, rowcount, errors = process_message(msg, msgdb)
             if rowcount:
-                LOGGER.info('File %s staged, updated %d rows in files table' % (filename, rowcount))
+                if errors:
+                    LOGGER.warning('File %s error: %s. Updated %d rows in files table' % (filename, errors, rowcount))
+                else:
+                    LOGGER.info('File %s staged, updated %d rows in files table' % (filename, rowcount))
                 LAST_KAFKA_MESSAGE = datetime.datetime.utcnow()
             else:
-                # pass
-                LOGGER.debug('Kafka message for file not in table')
+                pass
         except:
             LOGGER.error(traceback.format_exc())
             return
@@ -372,17 +374,26 @@ def notify_and_delete_job(curs, job_id, force_delete=False):
     if total_files == ready_files:
         return_code = JOB_SUCCESS
         comment = 'All %d files staged successfully' % total_files
+        LOGGER.info('Notify call for job %d: All %d files staged succesfully' % (job_id, total_files))
     elif total_files == (ready_files + error_files):
         return_code = JOB_FILE_ERRORS
         comment = 'Out of %d files in total, %d were staged successfully, but %d files had errors' % (total_files,
                                                                                                       ready_files,
                                                                                                       error_files)
+        LOGGER.info('Notify call for job %d: Out of %d files, %d were staged, but %d files had errors' % (job_id,
+                                                                                                          total_files,
+                                                                                                          ready_files,
+                                                                                                          error_files))
     else:
         return_code = JOB_TIMEOUT
         comment = 'Job timed out after %d seconds. Out of %d files in total, %d staged successfully, and %d files had errors' % (config.JOB_EXPIRY_TIME,
                                                                                                                                  total_files,
                                                                                                                                  ready_files,
                                                                                                                                  error_files)
+        LOGGER.info('Notify call for job %d: Job timed out after %d seconds. Out of %d files, %d were staged, but %d files had errors' % (config.JOB_EXPIRY_TIME,job_id,
+                                                                                                                                          total_files,
+                                                                                                                                          ready_files,
+                                                                                                                                          error_files))
 
     ok = send_result(notify_url,
                      job_id,
