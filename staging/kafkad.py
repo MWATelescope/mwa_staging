@@ -390,7 +390,8 @@ def notify_and_delete_job(curs, job_id, force_delete=False):
                                                                                                                                  total_files,
                                                                                                                                  ready_files,
                                                                                                                                  error_files)
-        LOGGER.info('Notify call for job %d: Job timed out after %d seconds. Out of %d files, %d were staged, but %d files had errors' % (config.JOB_EXPIRY_TIME,job_id,
+        LOGGER.info('Notify call for job %d: Job timed out after %d seconds. Out of %d files, %d were staged, but %d files had errors' % (job_id,
+                                                                                                                                          config.JOB_EXPIRY_TIME,
                                                                                                                                           total_files,
                                                                                                                                           ready_files,
                                                                                                                                           error_files))
