@@ -39,6 +39,7 @@ import os
 import json
 import datetime
 from datetime import timezone
+import glob
 import logging
 from logging import handlers
 import ssl
@@ -70,6 +71,7 @@ class KafkadConfig():
         self.SCOUT_STAGE_URL = os.getenv('SCOUT_STAGE_URL')
 
         self.STAGING_LOGDIR = os.getenv('STAGING_LOGDIR', '/tmp')
+        self.REPORT_EXPIREDAYS = os.getenv('REPORT_EXPIREDAYS', 30)
 
         self.DBUSER = os.getenv('DBUSER')
         self.DBPASSWORD = os.getenv('DBPASSWORD')
@@ -347,6 +349,66 @@ def HandleMessages(consumer):
             consumer.commit()   # Tell the Kafka server we've processed that message, so we don't see it again.
 
 
+def job_failed(curs, job_id, total_files):
+    """
+    Write a file to STAGING_LOGDIR/failed/ with the name '<job_id>.txt' containing a list of all files that weren't
+    transferred before the job timed out, and a list of all files with errors.
+
+    :param curs: Psycopg2 database cursor object
+    :param job_id: Integer job ID
+    :param total_files: Number of files in the job, in total
+    :return: True if the write succeeded, False otherwise.
+    """
+    outdir = os.path.join(config.STAGING_LOGDIR, 'failed')
+    if not os.path.isdir(outdir):    # Failed job directory doesn't exist
+        LOGGER.error('Failed jobs directory %s does not exist, not writing report for job %d.' % (outdir, job_id))
+        return False
+
+    out_filename = os.path.join(outdir, '%d.txt' % job_id)
+    if os.path.exists(out_filename):   # File already exists
+        LOGGER.error('Job report %s already exists, not re-writing it.')
+        return False
+
+    # Clear out old job report files:
+    flist = glob.glob(os.path.join(outdir, '*.txt'))
+    flist.sort()
+    # TODO - check that job IDs always increment!
+    deletelist = flist[:-100]  # Never expire the most recent 100 files (assuming job IDs get larger over time)
+    for fname in deletelist:
+        age = time.time() - os.stat(fname).st_mtime
+        if age > config.REPORT_EXPIREDAYS * 86400:
+            os.remove(fname)
+            LOGGER.info('Deleted old failed job report: %s' % fname)
+
+    curs.execute('SELECT filename from files where job_id=%s and not ready', (job_id,))
+    not_ready_files = curs.fetchall()
+
+    curs.execute('SELECT filename from files where job_id=%s and error', (job_id,))
+    error_files = curs.fetchall()
+
+    f = open(out_filename, 'w')
+    msg = 'Job failure report for job %d: Out of a total of %d files, %d had errors and %d failed to transfer.'
+    f.write(msg % (total_files, len(error_files), len(not_ready_files)))
+    f.write('\n\n')
+
+    if error_files:
+        f.write('Files with errors:\n')
+        for row in error_files:
+            f.write('  ' + row[0] + '\n')
+        f.write('\n')
+
+    if not_ready_files:
+        f.write('Files that failed to transfer:\n')
+        for row in not_ready_files:
+            f.write('  ' + row[0] + '\n')
+        f.write('\n')
+
+    f.close()
+    LOGGER.info(('Written: ' + msg) % (total_files, len(error_files), len(not_ready_files)))
+
+    return True
+
+
 def notify_and_delete_job(curs, job_id, force_delete=False):
     """
     Call the notify_url, and if that call is successful, delete the job and return True.
@@ -409,6 +471,9 @@ def notify_and_delete_job(curs, job_id, force_delete=False):
         LOGGER.error('Job %d failed to notify.' % job_id)
         if not force_delete:
             return False
+
+    if return_code != JOB_SUCCESS:   # Create a file in the failed jobs directory, listing the files that failed:
+        job_failed(curs=curs, job_id=job_id, total_files=total_files)
 
     try:
         curs.execute("DELETE FROM files WHERE job_id = %s", (job_id,))
