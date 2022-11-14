@@ -388,20 +388,20 @@ def job_failed(curs, job_id, total_files):
 
     f = open(out_filename, 'w')
     msg = 'Job failure report for job %d: Out of a total of %d files, %d had errors and %d failed to transfer.'
-    f.write(msg % (total_files, len(error_files), len(not_ready_files)))
-    f.write('\n\n')
-
-    if error_files:
-        f.write('Files with errors:\n')
-        for row in error_files:
-            f.write('  ' + row[0] + '\n')
-        f.write('\n')
-
-    if not_ready_files:
-        f.write('Files that failed to transfer:\n')
-        for row in not_ready_files:
-            f.write('  ' + row[0] + '\n')
-        f.write('\n')
+    # f.write(msg % (total_files, len(error_files), len(not_ready_files)))
+    # f.write('\n\n')
+    #
+    # if error_files:
+    #     f.write('Files with errors:\n')
+    #     for row in error_files:
+    #         f.write('  ' + row[0] + '\n')
+    #     f.write('\n')
+    #
+    # if not_ready_files:
+    #     f.write('Files that failed to transfer:\n')
+    #     for row in not_ready_files:
+    #         f.write('  ' + row[0] + '\n')
+    #     f.write('\n')
 
     f.close()
     LOGGER.info(('Written: ' + msg) % (total_files, len(error_files), len(not_ready_files)))
