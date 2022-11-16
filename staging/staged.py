@@ -550,7 +550,7 @@ def get_stats(response:Response):
                                         verify=False)
             if cache_result.status_code == 403:
                 cache_result = requests.get(config.SCOUT_CACHESTATE_URL,
-                                            auth=ScoutAuth(get_scout_token(refresh=False)),
+                                            auth=ScoutAuth(get_scout_token(refresh=True)),
                                             verify=False)
             if cache_result.status_code == 200:
                 resdict = cache_result.json()
