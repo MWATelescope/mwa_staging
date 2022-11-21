@@ -386,7 +386,7 @@ def job_failed(curs, job_id, total_files):
     curs.execute('SELECT filename from files where job_id=%s and error', (job_id,))
     error_files = curs.fetchall()
 
-    f = open(out_filename, 'w')
+#     f = open(out_filename, 'w')
     msg = 'Job failure report for job %d: Out of a total of %d files, %d had errors and %d failed to transfer.'
     # f.write(msg % (total_files, len(error_files), len(not_ready_files)))
     # f.write('\n\n')
@@ -403,8 +403,8 @@ def job_failed(curs, job_id, total_files):
     #         f.write('  ' + row[0] + '\n')
     #     f.write('\n')
 
-    f.close()
-    LOGGER.info(('Written: ' + msg) % (total_files, len(error_files), len(not_ready_files)))
+#     f.close()
+    LOGGER.info(('Failed job not written: ' + msg) % (total_files, len(error_files), len(not_ready_files)))
 
     return True
 
