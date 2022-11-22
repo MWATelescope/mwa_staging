@@ -359,6 +359,7 @@ def job_failed(curs, job_id, total_files):
     :param total_files: Number of files in the job, in total
     :return: True if the write succeeded, False otherwise.
     """
+    LOGGER.debug('Called job_failed for job %d' % job_id)
     outdir = os.path.join(config.STAGING_LOGDIR, 'failed')
     if not os.path.isdir(outdir):    # Failed job directory doesn't exist
         LOGGER.error('Failed jobs directory %s does not exist, not writing report for job %d.' % (outdir, job_id))
@@ -379,6 +380,8 @@ def job_failed(curs, job_id, total_files):
         if age > config.REPORT_EXPIREDAYS * 86400:
             os.remove(fname)
             LOGGER.info('Deleted old failed job report: %s' % fname)
+
+    LOGGER.debug('Working step 1 in job_failed for job %d' % job_id)
 
     curs.execute('SELECT filename from files where job_id=%s and not ready', (job_id,))
     not_ready_files = curs.fetchall()
@@ -402,6 +405,8 @@ def job_failed(curs, job_id, total_files):
     #     for row in not_ready_files:
     #         f.write('  ' + row[0] + '\n')
     #     f.write('\n')
+
+    LOGGER.debug('Working step 2 in job_failed for job %d' % job_id)
 
 #     f.close()
     LOGGER.info(('Failed job not written: ' + msg) % (total_files, len(error_files), len(not_ready_files)))
@@ -476,6 +481,7 @@ def notify_and_delete_job(curs, job_id, force_delete=False):
         job_failed(curs=curs, job_id=job_id, total_files=total_files)
 
     try:
+        LOGGER.debug('Deleting job for job %d' % job_id)
         curs.execute("DELETE FROM files WHERE job_id = %s", (job_id,))
         curs.execute("DELETE FROM staging_jobs WHERE job_id = %s", (job_id,))
         LOGGER.info('Job %d DELETED.' % job_id)
