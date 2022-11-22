@@ -389,27 +389,32 @@ def job_failed(curs, job_id, total_files):
     curs.execute('SELECT filename from files where job_id=%s and error', (job_id,))
     error_files = curs.fetchall()
 
-#     f = open(out_filename, 'w')
-    msg = 'Job failure report for job %d: Out of a total of %d files, %d had errors and %d failed to transfer.'
-    # f.write(msg % (total_files, len(error_files), len(not_ready_files)))
-    # f.write('\n\n')
-    #
-    # if error_files:
-    #     f.write('Files with errors:\n')
-    #     for row in error_files:
-    #         f.write('  ' + row[0] + '\n')
-    #     f.write('\n')
-    #
-    # if not_ready_files:
-    #     f.write('Files that failed to transfer:\n')
-    #     for row in not_ready_files:
-    #         f.write('  ' + row[0] + '\n')
-    #     f.write('\n')
-
     LOGGER.debug('Working step 2 in job_failed for job %d' % job_id)
 
-#     f.close()
-    LOGGER.info(('Failed job not written: ' + msg) % (total_files, len(error_files), len(not_ready_files)))
+    f = open(out_filename, 'w')
+    msg = 'Job failure report for job %d: Out of a total of %d files, %d had errors and %d failed to transfer.'
+    LOGGER.info(msg % (job_id, total_files, len(error_files), len(not_ready_files)))
+    f.write(msg % (job_id, total_files, len(error_files), len(not_ready_files)))
+    f.write('\n\n')
+
+    LOGGER.debug('Working step 3 in job_failed for job %d' % job_id)
+
+    if error_files:
+        f.write('Files with errors:\n')
+        for row in error_files:
+            f.write('  ' + row[0] + '\n')
+        f.write('\n')
+
+    if not_ready_files:
+        f.write('Files that failed to transfer:\n')
+        for row in not_ready_files:
+            f.write('  ' + row[0] + '\n')
+        f.write('\n')
+
+    LOGGER.debug('Working step 4 in job_failed for job %d' % job_id)
+
+    f.close()
+    LOGGER.info('Working step 5 in job_failed for job %d' % job_id)
 
     return True
 
