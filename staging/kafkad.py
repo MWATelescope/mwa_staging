@@ -381,23 +381,17 @@ def job_failed(curs, job_id, total_files):
             os.remove(fname)
             LOGGER.info('Deleted old failed job report: %s' % fname)
 
-    LOGGER.debug('Working step 1 in job_failed for job %d' % job_id)
-
     curs.execute('SELECT filename from files where job_id=%s and not ready', (job_id,))
     not_ready_files = curs.fetchall()
 
     curs.execute('SELECT filename from files where job_id=%s and error', (job_id,))
     error_files = curs.fetchall()
 
-    LOGGER.debug('Working step 2 in job_failed for job %d' % job_id)
-
     f = open(out_filename, 'w')
     msg = 'Job failure report for job %d: Out of a total of %d files, %d had errors and %d failed to transfer.'
     LOGGER.info(msg % (job_id, total_files, len(error_files), len(not_ready_files)))
     f.write(msg % (job_id, total_files, len(error_files), len(not_ready_files)))
     f.write('\n\n')
-
-    LOGGER.debug('Working step 3 in job_failed for job %d' % job_id)
 
     if error_files:
         f.write('Files with errors:\n')
@@ -411,11 +405,7 @@ def job_failed(curs, job_id, total_files):
             f.write('  ' + row[0] + '\n')
         f.write('\n')
 
-    LOGGER.debug('Working step 4 in job_failed for job %d' % job_id)
-
     f.close()
-    LOGGER.info('Working step 5 in job_failed for job %d' % job_id)
-
     return True
 
 
@@ -486,7 +476,6 @@ def notify_and_delete_job(curs, job_id, force_delete=False):
         job_failed(curs=curs, job_id=job_id, total_files=total_files)
 
     try:
-        LOGGER.debug('Deleting job for job %d' % job_id)
         curs.execute("DELETE FROM files WHERE job_id = %s", (job_id,))
         curs.execute("DELETE FROM staging_jobs WHERE job_id = %s", (job_id,))
         LOGGER.info('Job %d DELETED.' % job_id)
