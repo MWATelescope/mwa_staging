@@ -248,7 +248,10 @@ def create_job(job: models.NewJob):
                     LOGGER.info('Job %d - initial Scout staging number call #%d succeeded' % (job.job_id, fgroup + 1))
                 else:
                     LOGGER.info('Job %d - initial Scout staging call #%d failed: %s' % (job.job_id, fgroup + 1, result.text))
-        except (ssl.SSLEOFError, urllib3.exceptions.MaxRetryError, requests.exceptions.SSLError):  # Scout server not available
+        except (ssl.SSLEOFError,
+                urllib3.exceptions.MaxRetryError,
+                requests.exceptions.SSLError,
+                requests.exceptions.ConnectionError):  # Scout server not available
             LOGGER.error('Scout server not responding to %s in create_job' % config.SCOUT_STAGE_URL)
         except:
             exc_str = traceback.format_exc()
@@ -295,8 +298,11 @@ async def new_job(job: models.NewJob, background_tasks: BackgroundTasks, respons
     POST API to create a new staging job. Accepts a JSON dictionary defined above by the Job() class,
     which is processed by FastAPI and passed to this function as an actual instance of the Job() class.
 
+    Attributes for the job object are job_id (integer), files (list of filenames), notify_url (URL to call to notify the
+    client about job failure or success), and obs (MWA_Setting(), or a subclass)
+
     Most of the work involved is done in the create_job() function, called in the background after this new_job()
-    endpoint returns. Failures in that background task will be returned by calling the notify_url passed with the new
+    endpoint returns. Results from that background task will be returned by calling the notify_url passed with the new
     job details.
 
     This endpoint will return:
@@ -352,8 +358,10 @@ def read_status(job_id: int, response:Response, include_files: bool = False):
     """
     GET API to read status details about an existing staging job. Accepts job_id and (optional) include_files
     as parameters in the URL, and looks up that job's data. The job status is returned as a
-    JSON dict as defined by the JobStatus class. If you pass True in the 'include_files' parameter, then
-    a complete list of all files in the job will be returned in the status structure.
+    JSON dict as defined by the JobStatus class:
+
+    If you pass True in the 'include_files' parameter, then a complete list of all files in the job will be returned
+    in the status structure, as a dictionary, with filename as key, and tuples of (ready, error, readytime) as values.
     \f
     :param job_id:          Integer ASVO job ID
     :param include_files:   Pass True if the complete list of files should be included in the result
@@ -626,7 +634,9 @@ def get_joblist(response:Response):
 async def file_status(data: models.FileStatus, response: Response):
     """
     GET API to return the status of one or more files, using the Scout API to query the
-    file status.
+    file status. The structure returned is a dict, with filename as key, and a boolean
+    as value. The boolean wiill be True if all blocks in that file have been staged, or
+    False if some blocks are missing.
 
     This endpoint will return:
         200 with the status structure if all the files exist,
