@@ -409,80 +409,81 @@ def job_failed(curs, job_id, total_files):
     return True
 
 
-def notify_and_delete_job(curs, job_id, force_delete=False):
+def notify_and_delete_job(db, job_id, force_delete=False):
     """
     Call the notify_url, and if that call is successful, delete the job and return True.
 
     If unsuccessful, return False.
 
-    :param curs:  Psycopg2 cursor object
+    :param db:  Psycopg2 database object
     :param job_id: integer job ID
     :param force_delete: If True, delete the job even if the notify_url call failed
     :return:
     """
-    try:
-        curs.execute('SELECT count(*) from files where job_id=%s and ready', (job_id,))
-        ready_files = curs.fetchall()[0][0]
+    with db.cursor() as curs:
+        try:
+            curs.execute('SELECT count(*) from files where job_id=%s and ready', (job_id,))
+            ready_files = curs.fetchall()[0][0]
 
-        curs.execute('SELECT count(*) from files where job_id=%s and error', (job_id,))
-        error_files = curs.fetchall()[0][0]
+            curs.execute('SELECT count(*) from files where job_id=%s and error', (job_id,))
+            error_files = curs.fetchall()[0][0]
 
-        curs.execute('SELECT total_files, notify_url from staging_jobs where job_id=%s', (job_id,))
-        total_files, notify_url = curs.fetchall()[0]
-    except:
-        LOGGER.error('Exception getting file counts - maybe the job was deleted: %s' % traceback.format_exc())
-        return False
-
-    if total_files == ready_files:
-        return_code = JOB_SUCCESS
-        comment = 'All %d files staged successfully' % total_files
-        LOGGER.info('Notify call for job %d: All %d files staged succesfully' % (job_id, total_files))
-    elif total_files == (ready_files + error_files):
-        return_code = JOB_FILE_ERRORS
-        comment = 'Out of %d files in total, %d were staged successfully, but %d files had errors' % (total_files,
-                                                                                                      ready_files,
-                                                                                                      error_files)
-        LOGGER.info('Notify call for job %d: Out of %d files, %d were staged, but %d files had errors' % (job_id,
-                                                                                                          total_files,
-                                                                                                          ready_files,
-                                                                                                          error_files))
-    else:
-        return_code = JOB_TIMEOUT
-        comment = 'Job timed out after %d seconds. Out of %d files in total, %d staged successfully, and %d files had errors' % (config.JOB_EXPIRY_TIME,
-                                                                                                                                 total_files,
-                                                                                                                                 ready_files,
-                                                                                                                                 error_files)
-        LOGGER.info('Notify call for job %d: Job timed out after %d seconds. Out of %d files, %d were staged, but %d files had errors' % (job_id,
-                                                                                                                                          config.JOB_EXPIRY_TIME,
-                                                                                                                                          total_files,
-                                                                                                                                          ready_files,
-                                                                                                                                          error_files))
-
-    ok = send_result(notify_url,
-                     job_id,
-                     return_code=return_code,
-                     total_files=total_files,
-                     ready_files=ready_files,
-                     error_files=error_files,
-                     comment=comment)
-    if ok:
-        LOGGER.info('Job %d notified.' % job_id)
-    else:
-        LOGGER.error('Job %d failed to notify.' % job_id)
-        if not force_delete:
+            curs.execute('SELECT total_files, notify_url from staging_jobs where job_id=%s', (job_id,))
+            total_files, notify_url = curs.fetchall()[0]
+        except:
+            LOGGER.error('Exception getting file counts - maybe the job was deleted: %s' % traceback.format_exc())
             return False
 
-    if return_code != JOB_SUCCESS:   # Create a file in the failed jobs directory, listing the files that failed:
-        job_failed(curs=curs, job_id=job_id, total_files=total_files)
+        if total_files == ready_files:
+            return_code = JOB_SUCCESS
+            comment = 'All %d files staged successfully' % total_files
+            LOGGER.info('Notify call for job %d: All %d files staged succesfully' % (job_id, total_files))
+        elif total_files == (ready_files + error_files):
+            return_code = JOB_FILE_ERRORS
+            comment = 'Out of %d files in total, %d were staged successfully, but %d files had errors' % (total_files,
+                                                                                                          ready_files,
+                                                                                                          error_files)
+            LOGGER.info('Notify call for job %d: Out of %d files, %d were staged, but %d files had errors' % (job_id,
+                                                                                                              total_files,
+                                                                                                              ready_files,
+                                                                                                              error_files))
+        else:
+            return_code = JOB_TIMEOUT
+            comment = 'Job timed out after %d seconds. Out of %d files in total, %d staged successfully, and %d files had errors' % (config.JOB_EXPIRY_TIME,
+                                                                                                                                     total_files,
+                                                                                                                                     ready_files,
+                                                                                                                                     error_files)
+            LOGGER.info('Notify call for job %d: Job timed out after %d seconds. Out of %d files, %d were staged, but %d files had errors' % (job_id,
+                                                                                                                                              config.JOB_EXPIRY_TIME,
+                                                                                                                                              total_files,
+                                                                                                                                              ready_files,
+                                                                                                                                              error_files))
 
-    try:
-        curs.execute("DELETE FROM files WHERE job_id = %s", (job_id,))
-        curs.execute("DELETE FROM staging_jobs WHERE job_id = %s", (job_id,))
-        LOGGER.info('Job %d DELETED.' % job_id)
-        return True
-    except:
-        LOGGER.error('Exception when deleting job %d: %s' % (job_id, traceback.format_exc()))
-        return False
+        ok = send_result(notify_url,
+                         job_id,
+                         return_code=return_code,
+                         total_files=total_files,
+                         ready_files=ready_files,
+                         error_files=error_files,
+                         comment=comment)
+        if ok:
+            LOGGER.info('Job %d notified.' % job_id)
+        else:
+            LOGGER.error('Job %d failed to notify.' % job_id)
+            if not force_delete:
+                return False
+
+        if return_code != JOB_SUCCESS:   # Create a file in the failed jobs directory, listing the files that failed:
+            job_failed(curs=curs, job_id=job_id, total_files=total_files)
+
+        try:
+            curs.execute("DELETE FROM files WHERE job_id = %s", (job_id,))
+            curs.execute("DELETE FROM staging_jobs WHERE job_id = %s", (job_id,))
+            LOGGER.info('Job %d DELETED.' % job_id)
+            return True
+        except:
+            LOGGER.error('Exception when deleting job %d: %s' % (job_id, traceback.format_exc()))
+            return False
 
 
 def restage_job(curs, job_id):
@@ -563,7 +564,7 @@ def MonitorJobs(consumer):
                     LOGGER.debug('Check completion on job %d' % job_id)
                     if completed:   # Already marked as complete, but ASVO hasn't been successfully notified:
                         if ((time.time() - notify_attempts.get(job_id, 0)) > RETRY_INTERVAL):
-                            ok = notify_and_delete_job(curs=curs, job_id=job_id)
+                            ok = notify_and_delete_job(db=mondb, job_id=job_id)
                             if ok:
                                 mondb.commit()
                                 if job_id in notify_attempts:
@@ -577,7 +578,7 @@ def MonitorJobs(consumer):
                             curs.execute('UPDATE staging_jobs SET completed=true WHERE job_id=%s', (job_id,))
                             mondb.commit()
                             if ((time.time() - notify_attempts.get(job_id, 0)) > RETRY_INTERVAL):
-                                ok = notify_and_delete_job(curs=curs, job_id=job_id)
+                                ok = notify_and_delete_job(db=mondb, job_id=job_id)
                                 if ok:
                                     mondb.commit()
                                     if job_id in notify_attempts:
@@ -605,7 +606,8 @@ def MonitorJobs(consumer):
                                                                                                                    job_age,
                                                                                                                    last_stage))
                     if job_age > config.JOB_EXPIRY_TIME:
-                        ok = notify_and_delete_job(curs=curs, job_id=job_id, force_delete=True)
+                        ok = notify_and_delete_job(db=mondb, job_id=job_id, force_delete=True)
+                        LOGGER.debug('Returned from deleting job %d.' % job_id)
                         if ok:
                             if job_id in notify_attempts:
                                 del notify_attempts[job_id]
