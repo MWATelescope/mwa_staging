@@ -593,6 +593,7 @@ def MonitorJobs(consumer):
                 curs.execute("SELECT job_id, created, notify_url, completed FROM staging_jobs")
                 rows = curs.fetchall()
                 for job_id, created, notify_url, completed in rows:
+                    LOGGER.debug('Checking job %d' % job_id)
                     job_age = (datetime.datetime.now(timezone.utc) - created).total_seconds()
                     last_stage = min((time.time() - restage_attempts.get(job_id, 0)), job_age)
                     if completed:
@@ -611,6 +612,7 @@ def MonitorJobs(consumer):
                                 del restage_attempts[job_id]
                         else:
                             notify_attempts[job_id] = time.time()
+                        LOGGER.debug('Job %d expired' % job_id)
                     elif (not completed) and (last_stage > config.FILE_RESTAGE_INTERVAL):
                         LOGGER.info('Restaging job %d' % job_id)
                         ok = restage_job(curs=curs, job_id=job_id)
@@ -620,6 +622,7 @@ def MonitorJobs(consumer):
                         else:
                             LOGGER.info('Restaging job %d failed' % job_id)
 
+                LOGGER.debug('Committing:')
                 mondb.commit()
 
                 LOGGER.debug('Check to see if the Kafka daemon is still talking to us')
