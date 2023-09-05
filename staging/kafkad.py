@@ -590,12 +590,19 @@ def MonitorJobs(consumer):
 
                 LOGGER.debug('Check to see if any jobs need re-staging, or have timed out while waiting for completion')
                 # Loop over all uncompleted jobs, to see if any need re-staging, or have timed and the client should be notified about the error
-                curs.execute("SELECT job_id, created, notify_url FROM staging_jobs WHERE NOT completed")
+                curs.execute("SELECT job_id, created, notify_url, completed FROM staging_jobs")
                 rows = curs.fetchall()
-                for job_id, created, notify_url in rows:
+                for job_id, created, notify_url, completed in rows:
                     job_age = (datetime.datetime.now(timezone.utc) - created).total_seconds()
                     last_stage = min((time.time() - restage_attempts.get(job_id, 0)), job_age)
-                    LOGGER.debug("Job %d is %d seconds old, and was staged %d seconds ago." % (job_id, job_age, last_stage))
+                    if completed:
+                        LOGGER.debug("Completed Job %d is %d seconds old, and was last staged %d seconds ago." % (job_id,
+                                                                                                                  job_age,
+                                                                                                                  last_stage))
+                    else:
+                        LOGGER.debug('Incomplete Job %d is %d seconds old, and was last staged %d seconds ago.' % (job_id,
+                                                                                                                   job_age,
+                                                                                                                   last_stage))
                     if job_age > config.JOB_EXPIRY_TIME:
                         ok = notify_and_delete_job(curs=curs, job_id=job_id, force_delete=True)
                         if ok:
@@ -604,7 +611,7 @@ def MonitorJobs(consumer):
                                 del restage_attempts[job_id]
                         else:
                             notify_attempts[job_id] = time.time()
-                    elif (last_stage > config.FILE_RESTAGE_INTERVAL):
+                    elif (not completed) and (last_stage > config.FILE_RESTAGE_INTERVAL):
                         ok = restage_job(curs=curs, job_id=job_id)
                         if ok:
                             restage_attempts[job_id] = time.time()
