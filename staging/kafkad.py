@@ -569,6 +569,7 @@ def MonitorJobs(consumer):
                                 mondb.commit()
                                 if job_id in notify_attempts:
                                     del notify_attempts[job_id]
+                                if job_id in restage_attempts:
                                     del restage_attempts[job_id]
                             else:
                                 notify_attempts[job_id] = time.time()
@@ -583,6 +584,7 @@ def MonitorJobs(consumer):
                                     mondb.commit()
                                     if job_id in notify_attempts:
                                         del notify_attempts[job_id]
+                                    if job_id in restage_attempts:
                                         del restage_attempts[job_id]
                                 else:
                                     notify_attempts[job_id] = time.time()
@@ -613,11 +615,16 @@ def MonitorJobs(consumer):
                             if job_id in notify_attempts:
                                 LOGGER.debug('job_id %d is in notify_attempts' % job_id)
                                 del notify_attempts[job_id]
-                                LOGGER.debug('del notify_attempts[job_id] suceeded')
-                                del restage_attempts[job_id]
-                                LOGGER.debug('del restage_attempts[job_id] suceeded')
+                                LOGGER.debug('del notify_attempts[job_id] succeeded')
                             else:
                                 LOGGER.debug('job_id %d is not in notify_attempts' % job_id)
+
+                            if job_id in restage_attempts:
+                                LOGGER.debug('job_id %d is in restage_attempts' % job_id)
+                                del restage_attempts[job_id]
+                                LOGGER.debug('del restage_attempts[job_id] succeeded')
+                            else:
+                                LOGGER.debug('job_id %d is not in restage_attempts' % job_id)
                         else:
                             LOGGER.debug('ok is False')
                             notify_attempts[job_id] = time.time()
