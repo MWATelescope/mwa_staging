@@ -550,7 +550,7 @@ def MonitorJobs(consumer):
                              password=config.DBPASSWORD,
                              host=config.DBHOST,
                              database=config.DBNAME)
-
+    LOGGER.info('Starting MonitorJobs thread.')
     while True:
         with mondb:
             with mondb.cursor() as curs:
@@ -612,9 +612,14 @@ def MonitorJobs(consumer):
                         else:
                             notify_attempts[job_id] = time.time()
                     elif (not completed) and (last_stage > config.FILE_RESTAGE_INTERVAL):
+                        LOGGER.info('Restaging job %d' % job_id)
                         ok = restage_job(curs=curs, job_id=job_id)
                         if ok:
                             restage_attempts[job_id] = time.time()
+                            LOGGER.info('Restaging job %d succeeded' % job_id)
+                        else:
+                            LOGGER.info('Restaging job %d failed' % job_id)
+
                 mondb.commit()
 
                 LOGGER.debug('Check to see if the Kafka daemon is still talking to us')
@@ -632,6 +637,7 @@ def MonitorJobs(consumer):
 
 
 if __name__ == '__main__':
+    LOGGER.info('Starting kafkad main thread.')
     while True:
         try:
             ssl_settings = ssl.SSLContext(ssl.PROTOCOL_TLS)
