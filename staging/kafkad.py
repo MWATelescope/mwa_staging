@@ -609,10 +609,17 @@ def MonitorJobs(consumer):
                         ok = notify_and_delete_job(db=mondb, job_id=job_id, force_delete=True)
                         LOGGER.debug('Returned from deleting job %d.' % job_id)
                         if ok:
+                            LOGGER.debug('ok is True')
                             if job_id in notify_attempts:
+                                LOGGER.debug('job_id %d is in notify_attempts' % job_id)
                                 del notify_attempts[job_id]
+                                LOGGER.debug('del notify_attempts[job_id] suceeded')
                                 del restage_attempts[job_id]
+                                LOGGER.debug('del restage_attempts[job_id] suceeded')
+                            else:
+                                LOGGER.debug('job_id %d is not in notify_attempts' % job_id)
                         else:
+                            LOGGER.debug('ok is False')
                             notify_attempts[job_id] = time.time()
                         LOGGER.debug('Job %d expired' % job_id)
                     elif (not completed) and (last_stage > config.FILE_RESTAGE_INTERVAL):
