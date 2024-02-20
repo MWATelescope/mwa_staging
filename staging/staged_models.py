@@ -82,6 +82,7 @@ class JobStatus(BaseModel):
     total_files:  Total number of files in this job\n
     ready_files: Number of files successfully staged\n
     error_files: Number of files where Kafka returned an error\n
+    last_readytime: Integer unix timestamp of the last time a file was staged\n
     files:        key is filename, value is tuple(bool, bool, int), which contains (ready, error, readytime)\n
 
     The files attribute is a list of (ready:bool, readytime:int) tuples where ready_time is the time when that file
@@ -93,6 +94,7 @@ class JobStatus(BaseModel):
     total_files: Optional[int] = None  # Total number of files in this job
     ready_files: Optional[int] = None   # Number of files successfully staged
     error_files: Optional[int] = None   # Number of files where Kafka returned an error
+    last_readytime: Optional[int] = None  # Integer unix timestamp of the last time a file was staged
     # The files attribute is a list of (ready:bool, error:bool, readytime:int) tuples where ready_time
     # is the time when that file was staged or returned an error (or None if neither has happened yet)
     files: dict[str, tuple] = {"":(False, False, 0)}     # Specifying the tuple type as tuple(bool, int) crashes the FastAPI doc generator

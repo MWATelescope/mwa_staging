@@ -55,6 +55,12 @@ FROM files
 WHERE job_id = %s
 """
 
+QUERY_LAST_READY = """
+SELECT extract(epoch from max(readytime))
+FROM files
+WHERE job_id = %s and ready
+"""
+
 # All files belonging to the given job_id, that AREN'T in any other job
 QUERY_UNIQUE_FILES = """
 SELECT filename 

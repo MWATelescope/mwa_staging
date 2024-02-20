@@ -389,20 +389,29 @@ def read_status(job_id: int, response:Response, include_files: bool = False):
                 error_files = curs.fetchall()[0][0]
 
                 files = {}
+                last_readytime = 0
                 if include_files:
                     curs.execute(staged_db.QUERY_FILES, (job_id,))
                     for row in curs:
                         filename, ready, error, readytime = row
                         if readytime is not None:
                             readytime = int(readytime)
+                            if readytime > last_readytime:
+                                last_readytime = readytime
                         files[filename] = (ready, error, readytime)
+                else:
+                    curs.execute(staged_db.QUERY_LAST_READY, (job_id,))
+                    rows = curs.fetchall()
+                    if rows:
+                        last_readytime = int(rows[0][0])
 
                 result = models.JobStatus(job_id=job_id,
                                           created=int(created),
                                           completed=completed,
                                           total_files=total_files,
                                           ready_files=ready_files,
-                                          error_files=error_files)
+                                          error_files=error_files,
+                                          last_readytime=last_readytime,)
                 LOGGER.info("Job %d STATUS: %s" % (job_id, result))
                 result.files = files
                 return result
