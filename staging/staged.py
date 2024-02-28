@@ -403,7 +403,8 @@ def read_status(job_id: int, response:Response, include_files: bool = False):
                     curs.execute(staged_db.QUERY_LAST_READY, (job_id,))
                     rows = curs.fetchall()
                     if rows:
-                        last_readytime = int(rows[0][0])
+                        if rows[0][0] is not None:
+                            last_readytime = int(rows[0][0])
 
                 result = models.JobStatus(job_id=job_id,
                                           created=int(created),
