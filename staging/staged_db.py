@@ -49,6 +49,18 @@ FROM staging_jobs as sj
 ORDER BY sj.job_id;
 """
 
+LIST_JOBS_NEW = """
+SELECT sj.job_id as job_id, 
+       extract(epoch from sj.created) as created,
+       (SELECT count(*) FROM files WHERE files.job_id=sj.job_id AND ready) as staged_files, 
+       sj.total_files as total_files, 
+       sj.completed as completed, 
+       (SELECT extract(epoch from max(f.readytime)) FROM files as f WHERE f.job_id=sj.job_id) as last_readytime,
+       (SELECT count(*) FROM files WHERE files.job_id=sj.job_id AND error) as error_files
+FROM staging_jobs as sj
+ORDER BY sj.job_id;
+"""
+
 QUERY_FILES = """
 SELECT filename, ready, error, extract(epoch from readytime)
 FROM files

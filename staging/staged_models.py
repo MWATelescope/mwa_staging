@@ -135,7 +135,8 @@ class JobList(BaseModel):
 
     jobs:   Key is job ID, value is (staged_files, total_files, completed)
     """
-    jobs: dict[int, tuple] = {}  # Key is job ID, value is (staged_files, total_files, completed)
+    jobs: dict[int, tuple] = {}     # Key is job ID, value is (job_id, created, staged_files, total_files, completed,
+                                    # last_readytime, error_files)
 
 
 class ErrorResult(BaseModel):

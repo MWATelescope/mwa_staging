@@ -616,10 +616,10 @@ def get_joblist(response:Response):
         result = models.JobList()
         with db:
             with db.cursor() as curs:
-                curs.execute(staged_db.LIST_JOBS)
+                curs.execute(staged_db.LIST_JOBS_NEW)
                 for row in curs.fetchall():
-                    job_id, staged_files, total_files, completed = row
-                    result.jobs[job_id] = (staged_files, total_files, completed)
+                    job_id, created, staged_files, total_files, completed, last_readytime, error_files = row
+                    result.jobs[job_id] = (job_id, created, staged_files, total_files, completed, last_readytime, error_files)
 
         return result
     except Exception:
