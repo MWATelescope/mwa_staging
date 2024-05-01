@@ -206,6 +206,7 @@ def create_job(job: models.NewJob):
     :param job: An instance of the NewJob() class.
     :return: None - runs in the background after the new_job endpoint has already returned.
     """
+    LOGGER.info('Starting create_job callback with job_id: %d' % job.job_id)
     pathlist = []
     if job.files:
         pathlist = job.files
@@ -264,6 +265,8 @@ def create_job(job: models.NewJob):
         finally:   # Return the DB connection
             staged_db.DBPOOL.putconn(db)
 
+    LOGGER.info('Finishing create_job callback with job_id: %d' % job.job_id)
+
 
 ###############################################################################
 # FastAPI endpoint definitions
@@ -318,6 +321,7 @@ async def new_job(job: models.NewJob, background_tasks: BackgroundTasks, respons
     :param response: An instance of fastapi.Response(), used to set the status code returned
     :return: None
     """
+    LOGGER.info('Called new_job with job %d' % job.job_id)
     db = staged_db.DBPOOL.getconn()
     try:
         with db:
@@ -335,6 +339,7 @@ async def new_job(job: models.NewJob, background_tasks: BackgroundTasks, respons
             return models.ErrorResult(errormsg=err_msg)
 
         background_tasks.add_task(create_job, job=job)
+        LOGGER.info('Exiting new_job with job %d' % job.job_id)
         return
 
     except Exception:  # Any other errors
@@ -441,6 +446,7 @@ def delete_job(job_id: int, response:Response):
     :param response:  # An instance of fastapi.Response(), used to set the status code returned
     :return: None
     """
+    LOGGER.info('Called delete_job with job_id %d' % job_id)
     db = staged_db.DBPOOL.getconn()
     try:
         with db:
@@ -472,6 +478,8 @@ def delete_job(job_id: int, response:Response):
                     return models.ErrorResult(errormsg='Job %d not found' % job_id)
                 curs.execute(staged_db.DELETE_FILES, (job_id,))
                 LOGGER.info('Job %d DELETED.' % job_id)
+
+        LOGGER.info('Exiting delete_job with job_id %d' % job_id)
         return
     except Exception:  # Any other errors
         response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
