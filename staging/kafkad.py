@@ -344,8 +344,14 @@ def HandleMessages(consumer):
                 pass
         except:
             LOGGER.error(traceback.format_exc())
+            LOGGER.error('Exiting!')
+            return
         else:
-            consumer.commit()   # Tell the Kafka server we've processed that message, so we don't see it again.
+            try:
+                consumer.commit()   # Tell the Kafka server we've processed that message, so we don't see it again.
+            except errors.CommitFailedError:
+                LOGGER.error(traceback.format_exc())
+                LOGGER.error('Continuing.')
 
 
 def job_failed(curs, job_id, total_files):
