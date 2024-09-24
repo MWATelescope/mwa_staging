@@ -344,7 +344,6 @@ def HandleMessages(consumer):
                 pass
         except:
             LOGGER.error(traceback.format_exc())
-            return
         else:
             consumer.commit()   # Tell the Kafka server we've processed that message, so we don't see it again.
 
