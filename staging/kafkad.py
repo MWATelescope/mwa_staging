@@ -333,10 +333,10 @@ def HandleMessages(consumer):
                              database=config.DBNAME)
     for msg in consumer:
         try:
-            filename, rowcount, errors = process_message(msg, msgdb)
+            filename, rowcount, processing_errors = process_message(msg, msgdb)
             if rowcount:
-                if errors:
-                    LOGGER.warning('File %s error: %s. Updated %d rows in files table' % (filename, errors, rowcount))
+                if processing_errors:
+                    LOGGER.warning('File %s error: %s. Updated %d rows in files table' % (filename, processing_errors, rowcount))
                 else:
                     LOGGER.info('File %s staged, updated %d rows in files table' % (filename, rowcount))
                 LAST_KAFKA_MESSAGE = datetime.datetime.utcnow()
