@@ -76,6 +76,8 @@ nginx setup:
 
 -Create /etc/nginx/certs and copy in mwatelescope.org.crt, mwatelescope.org.key and pawsey.crt
 
+rm /etc/nginx/sites-enabled/default
+
 -Create /etc/nginx/conf.d/default.conf containing:
  -----------------
  upstream api {
@@ -153,3 +155,17 @@ pip install "fastapi[all]"
 pip install kafka-python
 pip install requests
 
+============================================================================================================
+Running the code for testing, as the staging user:
+
+cd mwa_staging
+source staging_env/bin/activate
+cd staging
+
+uvicorn staged:app --reload --host 127.0.0.1   # doesn't exit
+
+-or
+
+python kafkad.py   # doesn't exit
+
+============================================================================================================
