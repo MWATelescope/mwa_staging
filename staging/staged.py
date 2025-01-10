@@ -285,7 +285,7 @@ async def startup():
 async def shutdown():
     """Run on FastAPI shutdown, to close all of the connections in the Postgres connection pool.
     """
-    staged_db.DBPOOL.closeall()
+    staged_db.DBPOOL.close()
 
 
 @app.post("/staging/",
