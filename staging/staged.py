@@ -13,9 +13,7 @@ import logging
 from logging import handlers
 import traceback
 
-import psycopg2
 import urllib3.exceptions
-from psycopg2 import extras
 
 from fastapi import FastAPI, BackgroundTasks, Query, Request, Response, status
 import requests
@@ -232,8 +230,9 @@ def create_job(job: models.NewJob):
                                                         job.notify_url,  # URL to call on success/failure
                                                         datetime.datetime.now(timezone.utc),  # created
                                                         len(pathlist)))  # total_files
-                    psycopg2.extras.execute_values(curs, staged_db.WRITE_FILES,
-                                                   [(job.job_id, f, False, False) for f in pathlist])
+                    curs.execute_many(curs,
+                                      staged_db.WRITE_FILES,
+                                      [(job.job_id, f, False, False) for f in pathlist])
             LOGGER.info('Job %d created.' % job.job_id)
 
             # Split filenames into groups of 10000, to avoid a request size > 4 MB

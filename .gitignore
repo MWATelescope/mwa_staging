@@ -2,3 +2,4 @@
 .envrc
 config/
 pawsey-cacert.crt
+/staging_env/

@@ -5,13 +5,13 @@ Database handling code and some query definitions, for staged.py
 
 from threading import Semaphore
 
-from psycopg2 import pool
+import psycopg_pool
 
 
 MINCONN = 2          # Start with this many database connections
 MAXCONN = 100         # Don't ever create more than this many
 
-DBPOOL = pool.ThreadedConnectionPool(0, 0)    # Will be a real, connected psycopg2 database connection pool object after startup
+DBPOOL = None    # Will be a real, connected psycopg2 database connection pool object after startup
 
 
 CREATE_JOB = """
@@ -84,24 +84,6 @@ WHERE (SELECT count(*)
        WHERE files.filename=tquery.filename AND job_id <> %s) = 0
 """
 
-class ReallyThreadedConnectionPool(pool.ThreadedConnectionPool):
-    """
-    Block if we exceed the maximum number of connections, instead of throwing an exception.
-
-    From: https://stackoverflow.com/questions/48532301/python-postgres-psycopg2-threadedconnectionpool-exhausted
-    """
-    def __init__(self, minconn, maxconn, *args, **kwargs):
-        self._semaphore = Semaphore(maxconn)
-        super().__init__(minconn, maxconn, *args, **kwargs)
-
-    def getconn(self, *args, **kwargs):
-        self._semaphore.acquire()
-        return super().getconn(*args, **kwargs)
-
-    def putconn(self, *args, **kwargs):
-        super().putconn(*args, **kwargs)
-        self._semaphore.release()
-
 
 def initdb(config):
     """
@@ -111,9 +93,8 @@ def initdb(config):
     :return: None
     """
     global DBPOOL
-    DBPOOL = ReallyThreadedConnectionPool(minconn=MINCONN,
-                                          maxconn=MAXCONN,
-                                          host=config.DBHOST,
-                                          user=config.DBUSER,
-                                          database=config.DBNAME,
-                                          password=config.DBPASSWORD)
+    DBPOOL = psycopg_pool.ConnectionPool('postgresql://%s:%s@%s/%s' % (config.DBUSER, config.DBPASSWORD, config.DBHOST, config.DBNAME),
+                                         min_size=MINCONN,
+                                         max_size=MAXCONN,
+                                         open=True,
+                                         timeout=360,)

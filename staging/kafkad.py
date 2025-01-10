@@ -49,7 +49,7 @@ import traceback
 import urllib3
 from urllib3.exceptions import InsecureRequestWarning
 
-import psycopg2
+import psycopg
 import requests
 from requests.auth import AuthBase
 from kafka import errors, KafkaConsumer
@@ -327,10 +327,10 @@ def HandleMessages(consumer):
     :return:
     """
     global LAST_KAFKA_MESSAGE
-    msgdb = psycopg2.connect(user=config.DBUSER,
-                             password=config.DBPASSWORD,
-                             host=config.DBHOST,
-                             database=config.DBNAME)
+    msgdb = psycopg.connect(user=config.DBUSER,
+                            password=config.DBPASSWORD,
+                            host=config.DBHOST,
+                            database=config.DBNAME)
     for msg in consumer:
         try:
             filename, rowcount, processing_errors = process_message(msg, msgdb)
@@ -359,7 +359,7 @@ def job_failed(curs, job_id, total_files):
     Write a file to STAGING_LOGDIR/failed/ with the name '<job_id>.txt' containing a list of all files that weren't
     transferred before the job timed out, and a list of all files with errors.
 
-    :param curs: Psycopg2 database cursor object
+    :param curs: Psycopg database cursor object
     :param job_id: Integer job ID
     :param total_files: Number of files in the job, in total
     :return: True if the write succeeded, False otherwise.
@@ -420,7 +420,7 @@ def notify_and_delete_job(db, job_id, force_delete=False):
 
     If unsuccessful, return False.
 
-    :param db:  Psycopg2 database object
+    :param db:  Psycopg database object
     :param job_id: integer job ID
     :param force_delete: If True, delete the job even if the notify_url call failed
     :return:
@@ -495,7 +495,7 @@ def restage_job(curs, job_id):
     """
     Ask Scout to stage all the files in this job, in case the original staging request was lost.
 
-    :param curs:   Psycopg2 cursor object
+    :param curs:   Psycopg cursor object
     :param job_id: integer job ID
     :return: True if Scout API called successfully.
     """
@@ -552,10 +552,10 @@ def MonitorJobs(consumer):
     notify_attempts = {}    # Dict with job_id as the key, and unix timestamp as the value for the last attempt
     restage_attempts = {}   # Dict with job_id as the key, and unix timestamp for the last time a 're-stage files' call
                             # was made as the value
-    mondb = psycopg2.connect(user=config.DBUSER,
-                             password=config.DBPASSWORD,
-                             host=config.DBHOST,
-                             database=config.DBNAME)
+    mondb = psycopg.connect(user=config.DBUSER,
+                            password=config.DBPASSWORD,
+                            host=config.DBHOST,
+                            database=config.DBNAME)
     LOGGER.info('Starting MonitorJobs thread.')
     while True:
         with mondb:
