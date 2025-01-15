@@ -3,7 +3,18 @@ Its IP is 192.168.0.112 (internal), 146.118.65.254 (external), and it accesses t
 146.118.74.144-149 on port 8080 to stage files, and connects to the Pawsey Kafka server franz.pawsey.org.au on
 port 9093 to subscribe to messages about files that have been staged.
 
-I’m in the middle of setting up a new dev server, on another Nimbus instance, IP 192.168.0.121 (internal),
-146.118.69.232 (external). Could you please make sure that the new instance has the same access to
-146.118.74.144-149 port 8080 and franz.pawsey.org.au (146.118.50.18) as the existing instance?
+I’m setting up a new dev server, on another Nimbus instance, IP 146.118.69.232 (external).
 
+Currently, the new server can't reach the Scout API servers, or establish a connection
+to the Kafka server, presumably because of your firewall (looks fine from the Nimbus end).
+
+Could you please make sure that the new instance on 146.118.69.232 has the same access to/from:
+
+    -the Scount API servers on 146.118.74.144-149 port 8080
+    -Kafka (port 9093) on franz.pawsey.org.au (146.118.50.18)
+
+as the existing instance?
+
+Thanks,
+
+Andrew

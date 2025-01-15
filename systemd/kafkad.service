@@ -1,0 +1,21 @@
+[Unit]
+Description=Apache Kafka client daemon for staging server
+# StartLimitIntervalSec=600
+# StartLimitBurst=5
+
+[Service]
+User=staging
+Group=staging
+Restart=on-failure
+RestartSec=60s
+
+EnvironmentFile=/home/staging/mwa_staging/.envrc
+# Only needed if the executable is a python script
+Environment=PYTHONUNBUFFERED=1
+
+WorkingDirectory=/home/staging/mwa_staging/staging
+ExecStart=/bin/bash -c '/home/staging/mwa_staging/staging_env/bin/python kafkad.py > /tmp/kafkad.out 2>&1'
+
+[Install]
+# This unit should start on boot
+WantedBy=multi-user.target
