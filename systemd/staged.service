@@ -14,7 +14,7 @@ EnvironmentFile=/home/staging/mwa_staging/.envrc
 Environment=PYTHONUNBUFFERED=1
 
 WorkingDirectory=/home/staging/mwa_staging/staging
-ExecStart=/bin/bash -c '/home/staging/mwa_staging/staging_env/bin/python uvicorn staged:app --reload --host 127.0.0.1 > /tmp/staged.out 2>&1'
+ExecStart=/bin/bash -c '. /home/staging/mwa_staging/.envrc && /home/staging/mwa_staging/staging_env/bin/python uvicorn staged:app --reload --host 127.0.0.1 > /tmp/staged.out 2>&1'
 
 [Install]
 # This unit should start on boot
