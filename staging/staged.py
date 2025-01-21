@@ -563,14 +563,17 @@ def get_stats(response:Response):
         else:
             lm = None
 
-        result = models.GlobalStatistics(kafkad_heartbeat=hb,
-                                         kafka_alive=kafka_alive,
-                                         last_message=lm,
-                                         completed_jobs=completed_jobs,
-                                         incomplete_jobs=incomplete_jobs,
-                                         ready_files=ready_files,
-                                         error_files=error_files,
-                                         waiting_files=waiting_files)
+        try:
+            result = models.GlobalStatistics(kafkad_heartbeat=hb,
+                                             kafka_alive=kafka_alive,
+                                             last_message=lm,
+                                             completed_jobs=completed_jobs,
+                                             incomplete_jobs=incomplete_jobs,
+                                             ready_files=ready_files,
+                                             error_files=error_files,
+                                             waiting_files=waiting_files)
+        except:
+            result = models.GlobalStatistics()
 
         LOGGER.info('Getting cache status ')
         try:
