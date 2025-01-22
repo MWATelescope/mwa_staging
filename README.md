@@ -10,22 +10,22 @@ While Acacia is a disk-based system, and all data is immediately available for
 copy, Banksia uses a robotic tape library for data archival, and data must be 
 copied onto a disk cache before it can be accessed.
 
-Banksia provides a Rest API for interacting with the system, and an S3 compliant 
-gateway for copying data. This software handles only the staging of data by 
-interacting with the REST API, and is not responsible for copying data. This 
-software presents a web service where a user can provide either an MWA 
-Observation ID (obs_id) or list of files, a callback URL, and some other 
-parameters. Once staging is completed, a request is sent to the specified 
-callback URL to indicate that all files have been staged and are ready to 
-be copied.
+Banksia provides a Rest API for interacting with the system, an S3 compliant 
+gateway for copying data, and sends messages via Apache Kafka as each file 
+is staged off tape onto the gateway. This software handles only the staging of 
+data by interacting with the REST API and listening to the Kafka messages, 
+and is not responsible for copying data off the gateway. 
 
-We use two different sets of Docker containers, one for development, and 
-another for production. These can be started easily by using the included 
-compose file.
+This software presents a web service where a user can provide either an MWA 
+Observation ID (obs_id) or list of files, as well as a callback URL, and some 
+other parameters. Once staging is completed, a request is sent to the specified 
+callback URL to indicate that all files have been staged and are ready to 
+be copied, or to pass on any errors.
 
 ## High Level Architecture
-When the stack is running, an NGINX web server will proxy requests to a Python 
-FastAPI web server. Once a 'new staging job' request has been received
+Requests are received via https (443) requests to an NGINX web server, which will 
+proxy these requests to a Python FastAPI web server listening (only on 
+localhost) on port 8000. Once a 'new staging job' request has been received
 (containing either an MWA observation ID or file list), the FastAPI code will
 do some basic sanity checking, then return immediately with a 202 ('Accepted') 
 status code. 
@@ -39,8 +39,11 @@ files, and finally creates records in the Postgres database describing the
 new staging job.
 
 In the production Banksia system, there are 6 so-called "vss" nodes which 
-are running the API. We therefore use HA Proxy on the client side to load balance 
-requests between each of these nodes.
+are running the Scout API. We therefore use HA Proxy on the client side to 
+load balance requests between each of these nodes. HAProxy is set to listen 
+on http://localhost:8080, and redistribute any calls to that address to one of the
+six Scout API servers on 146.118.74.144-149 on port 8080, rotating through 
+the six servers to balance the load and work around individual server outages.
 
 As files are being copied off of tape and onto cache, Banksia will publish 
 messages to a Kafka message bus, one for each file, containing the name of
@@ -53,11 +56,94 @@ that the job is complete (or has timed out), the job will be deleted from the
 database.
 
 ## Installation
-- Download the repository
-- Set environment variables
-- Create the log directory (/var/log/staging) and make it writeable by the process
-  running the docker stack.
-- Bring up the stack
+Assuming a vanilla Ubuntu 24.04 installation:
+
+  - Install packages and create the staging user, as root:
+```
+apt install direnv haproxy postgresql python3-pip python-is-python3 python3.12-venv nginx
+adduser --disabled-password staging
+mkdir /var/log/staging
+chown staging:staging /var/log/staging
+```
+ 
+  - Download and set up the software, as the staging user:
+    - [Optional]: Run ssh-keygen to create an SSH key, and copy the SSH key to github 'mwa-site' user
+    - Install this line at the end of ~/.bashrc:
+      ```
+      eval "$(direnv hook bash)"
+      ```
+    - Log out and back in again (or otherwise force the new .bashrc to be loaded)
+    - Download the git repo:
+      ```
+      git clone git@github.com:MWATelescope/mwa_staging.git
+      ```
+    - Create  mwa_staging/.envrc and add all the environment variables as described below,
+      using the template mwa_staging/config_file_examples/dot_envrc.example
+
+    - Install the Python environment and dependencies, as the staging user:
+      ```
+      cd mwa_staging
+      direnv allow     # You should see a message about all the environment variables being set
+      
+      python -m venv staging_env
+      source staging_env/bin/activate
+      
+      pip install orjson
+      pip install "psycopg[binary]"
+      pip install psycopg_pool
+      pip install "fastapi[all]"
+      pip install kafka-python
+      pip install requests
+      ```
+
+
+
+  - Set up haproxy, as root:
+```
+cp /home/staging/mwa_staging/config_file_examples/haproxy.cfg /etc/haproxy.cfg
+systemctl restart haproxy
+```
+
+  - Set up nginx, as root:
+```
+rm /etc/nginx/sites-enabled/default
+cp /home/staging/mwa_staging/config_file_examples/nginx.conf.example /etc/nginx/conf.d/default.conf
+
+systemctl restart nginx
+```
+
+  - Set up PostgreSQL, as root:
+    - Default config files in /etc/postgres can be left unchanged (listening only on 127.0.0.1)
+    ```
+    sudo su postgres
+    psql
+    postgres-# CREATE USER staging WITH ENCRYPTED PASSWORD '<insert_secret_here>';
+    postgres=# CREATE DATABASE staging;
+    postgres=# GRANT ALL PRIVILEGES ON DATABASE staging TO staging;
+    ```
+    - Then exit psql (Ctrl-D), and run:
+    ```
+    psql -d staging
+    postgres=# GRANT ALL ON SCHEMA public TO staging
+    ```
+    - Then exit psql again (Ctrl-D) and run:
+    ```
+    su -l staging
+    psql -d staging
+    ```
+    - Then paste the contents of /home/staging/mwa_staging/config_file_examples/tabledefs.sql 
+     into the psql prompt.
+
+
+  - Set up systemd services for staged and kafkad, and start the software, as root:
+    ```
+    cp config_file_examples/kafkad.service.example /etc/systemd/system/kafkad.service
+    cp config_file_examples/staged.service.example /etc/systemd/system/staged.service
+    
+    systemctl daemon-reload
+    systemctl enable kafkad.service staged.service
+    systemctl start kafkad.service staged.service
+    ```
 
 ### Environment Variables
 We make use of environment variables to store configuration information. A 
@@ -65,83 +151,55 @@ template containing the required variables is included below. We recommend
 using [direnv](https://direnv.net/) to manage this config.
 ```bash
 # Credentials to pass to the Scout API to stage files and request file status
-export SCOUT_API_USER=
-export SCOUT_API_PASSWORD=
+export SCOUT_API_USER=<Insert secret here>
+export SCOUT_API_PASSWORD=<Insert secret here>
 
 # The Scout API endpoints to stage files and request file status.
-# Note that tha staged.py API includes dummy versions of these endpoints
+export SCOUT_LOGIN_URL=https://localhost:8080/v1/security/login
+export SCOUT_QUERY_URL=https://localhost:8080/v1/file
+export SCOUT_STAGE_URL=https://localhost:8080/v1/request/batchstage
+export SCOUT_CANCEL_URL=https://localhost:8080/v1/request/cancelbatchstage
+export SCOUT_CACHESTATE_URL=https://localhost:8080/v1/fscache
+
+# Note that tha staged.py API includes dummy versions of some of these endpoints
 # for testing - use a prefix of http://localhost:8000/ for this.
-export SCOUT_LOGIN_URL=https://haproxy:8081/v1/security/login
-export SCOUT_QUERY_URL=https://haproxy:8081/v1/file
-export SCOUT_STAGE_URL=https://haproxy:8081/v1/request/batchstage
-export SCOUT_CANCEL_URL=https://haproxy:8080/v1/request/cancelbatchstage
+#export SCOUT_LOGIN_URL=http://localhost:8000/v1/security/login
+#export SCOUT_QUERY_URL=http://localhost:8000/v1/file
+#export SCOUT_STAGE_URL=http://localhost:8000/v1/request/batchstage
 
 # The Basic Auth credentials to pass to the 'notify_url' given when a job is created
-export RESULT_USERNAME=
-export RESULT_PASSWORD=
+export RESULT_USERNAME=<Insert secret here>
+export RESULT_PASSWORD=<Insert secret here>
 
 # PostgreSQL database parameters for maintaining the current job and file lists
-export DBUSER=
-export DBPASSWORD=
-export DBHOST=
-export DBNAME=
+export DBUSER=staging
+export DBPASSWORD=<Insert secret here>
+export DBHOST=localhost
+export DBNAME=staging
 
 # Kafka server credentials
-export KAFKA_TOPIC=
-export KAFKA_SERVER=
-export KAFKA_USER=
-export KAFKA_PASSWORD=
+export KAFKA_TOPIC=<Insert secret here>
+export KAFKA_SERVER=franz.pawsey.org.au:9093
+export KAFKA_USER=<Insert secret here>
+export KAFKA_PASSWORD=<Insert secret here>
 
 # Web service to look up what files are associated with a given MWA observation ID
 export DATA_FILES_URL=http://ws.mwatelescope.org/metadata/data_files
+
+# Log file directory
+export STAGING_LOGDIR=/var/log/staging
+
+# How many days to keep old job failure reports in STAGING_LOGDIR/failed/<job_id>.txt
+export REPORT_EXPIREDAYS=30
+
+# Re-stage interval, for any files that we are still waiting on
+export FILE_RESTAGE_INTERVAL=21600
+
+# Job expiry time (how long to wait for files before we give up and notify ASVO that it has failed
+export JOB_EXPIRY_TIME=691200
+
 ```
 
-### Starting the development stack
-Once the config info has been set, use the docker-compose.yml file to bring up 
-the development stack.
-
-Note that the development stack will require a different set of environment 
-variables pointing to the local (test) Kafka server, dummy Banksia endpoints 
-defined in staged.py, etc.
-
-Note also that the development stack hasn't had a lot of testing, and is NOT safe to 
-run in at the same time as the production stack - for example, both use the same
-physical volume to store the PostgreSQL database files.
-```bash
-docker-compose up
-```
-
-### Starting the production stack
-Once the config info has been set, use the docker-compose-prod.yml file to bring 
-up the production stack.
-```bash
-docker-compose -f docker-compose-prod.yml up --detach
-```
-
-## Services included with each stack
-Both the development and production stacks use a different, and overlapping set 
-of services, which are listed below.
-
-### Development
-The development stack includes extra services to facilitate local development 
-and testing. Including an instance of Kafka (which requires Zookeeper) and PG 
-Admin for administration of the included PostgreSQL database.
-
-- API Server (staging/staged.py)
-- PostgreSQL Database
-- PG Admin
-- NGINX
-- Zookeeper
-- Kafka
-- kafkad (staging/kafkad.py)
-- HA Proxy
-
-### Production
-- API Server (staging/staged.py)
-- PostgreSQL Database
-- NGINX
-- kafkad (staging/kafkad.py)
-- HA Proxy
 
 ## Each of the services explained
 
@@ -170,14 +228,6 @@ database.
 ### NGINX
 We use NGINX as a reverse proxy, which will direct traffic to the various 
 services.
-
-### Kafka & ZooKeeper
-To facilitate local development, the development stack inludes an instance 
-of Kafka (for which Zookeeper is required) which will allow you to manually 
-send staging messages and verify that they are being read and associated 
-rows being marked correctly. This has not been well tested, and you may need 
-to refer to the [docs](https://hub.docker.com/r/wurstmeister/kafka) for the 
-Kafka container to configure this properly.
 
 ### HA Proxy
 This is included in the development stack in order to mirror a production 

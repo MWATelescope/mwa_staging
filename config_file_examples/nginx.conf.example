@@ -1,0 +1,23 @@
+ upstream api {
+    server localhost:8000;
+}
+
+server {
+    listen 443 ssl;
+    server_name staging.mwatelescope.org;
+    ssl_certificate /etc/nginx/certs/mwatelescope_org.crt;
+    ssl_certificate_key /etc/nginx/certs/mwatelescope_org.key;
+    client_max_body_size 100M;
+
+    location / {
+        proxy_pass http://api;
+    }
+}
+
+server {
+  listen 80 default_server;
+  server_name _;
+  client_max_body_size 100M;
+
+  return 301 https://$host$request_uri;
+}
