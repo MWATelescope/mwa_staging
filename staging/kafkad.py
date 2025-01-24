@@ -327,10 +327,7 @@ def HandleMessages(consumer):
     :return:
     """
     global LAST_KAFKA_MESSAGE
-    msgdb = psycopg.connect(user=config.DBUSER,
-                            password=config.DBPASSWORD,
-                            host=config.DBHOST,
-                            database=config.DBNAME)
+    msgdb = psycopg.connect("user=%s password=%s host=%s dbname=%s" % (config.DBUSER, config.DBPASSWORD, config.DBHOST, config.DBNAME))
     for msg in consumer:
         try:
             filename, rowcount, processing_errors = process_message(msg, msgdb)
@@ -552,10 +549,7 @@ def MonitorJobs(consumer):
     notify_attempts = {}    # Dict with job_id as the key, and unix timestamp as the value for the last attempt
     restage_attempts = {}   # Dict with job_id as the key, and unix timestamp for the last time a 're-stage files' call
                             # was made as the value
-    mondb = psycopg.connect(user=config.DBUSER,
-                            password=config.DBPASSWORD,
-                            host=config.DBHOST,
-                            database=config.DBNAME)
+    mondb = psycopg.connect("user=%s password=%s host=%s dbname=%s" % (config.DBUSER, config.DBPASSWORD, config.DBHOST, config.DBNAME))
     LOGGER.info('Starting MonitorJobs thread.')
     while True:
         with mondb:
