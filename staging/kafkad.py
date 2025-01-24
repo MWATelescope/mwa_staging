@@ -286,14 +286,14 @@ def process_message(msg, db):
     if not errors:
         # If a file (in another job) was already 'ready', don't change the readytime value
         query = "UPDATE files SET ready=true, error=false, readytime=now() WHERE filename=%s and not ready"
-        with db:
+        with db.transaction():
             with db.cursor() as curs:
                 curs.execute(query, (filename,))
                 return filename, curs.rowcount, errors
     else:
         # If a file (in another job) was already 'error', don't change the readytime value
         query = "UPDATE files SET error=true, ready=false, readytime=now() WHERE filename=%s and not error"
-        with db:
+        with db.transaction():
             with db.cursor() as curs:
                 curs.execute(query, (filename,))
                 return filename, curs.rowcount, errors
@@ -552,7 +552,7 @@ def MonitorJobs(consumer):
     mondb = psycopg.connect("user=%s password=%s host=%s dbname=%s" % (config.DBUSER, config.DBPASSWORD, config.DBHOST, config.DBNAME))
     LOGGER.info('Starting MonitorJobs thread.')
     while True:
-        with mondb:
+        with mondb.transaction():
             with mondb.cursor() as curs:
                 curs.execute(COMPLETION_QUERY)
                 rows = curs.fetchall()
