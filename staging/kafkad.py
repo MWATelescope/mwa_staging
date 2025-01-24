@@ -565,32 +565,29 @@ def MonitorJobs(consumer):
                         if ((time.time() - notify_attempts.get(job_id, 0)) > RETRY_INTERVAL):
                             ok = notify_and_delete_job(db=mondb, job_id=job_id)
                             if ok:
-                                mondb.commit()
                                 if job_id in notify_attempts:
                                     del notify_attempts[job_id]
                                 if job_id in restage_attempts:
                                     del restage_attempts[job_id]
                             else:
                                 notify_attempts[job_id] = time.time()
+                                mondb.rollback()
                     else:
                         if (num_files == total_files):  # If all the files are either 'ready' or 'error', mark it as complete
                             LOGGER.info('    job %d marked as complete.' % job_id)
                             curs.execute('UPDATE staging_jobs SET completed=true WHERE job_id=%s', (job_id,))
-                            mondb.commit()
                             if ((time.time() - notify_attempts.get(job_id, 0)) > RETRY_INTERVAL):
                                 ok = notify_and_delete_job(db=mondb, job_id=job_id)
                                 if ok:
-                                    mondb.commit()
                                     if job_id in notify_attempts:
                                         del notify_attempts[job_id]
                                     if job_id in restage_attempts:
                                         del restage_attempts[job_id]
                                 else:
                                     notify_attempts[job_id] = time.time()
+                                    mondb.rollback()
 
-                mondb.commit()
-
-                LOGGER.debug('Check to see if any jobs need re-staging, or have timed out while waiting for completion')
+                    LOGGER.debug('Check to see if any jobs need re-staging, or have timed out while waiting for completion')
                 # Loop over all uncompleted jobs, to see if any need re-staging, or have timed and the client should be notified about the error
                 curs.execute("SELECT job_id, created, notify_url, completed FROM staging_jobs")
                 rows = curs.fetchall()
@@ -637,9 +634,6 @@ def MonitorJobs(consumer):
                         else:
                             LOGGER.info('Restaging job %d failed' % job_id)
 
-                LOGGER.debug('Committing:')
-                mondb.commit()
-
                 LOGGER.debug('Check to see if the Kafka daemon is still talking to us')
                 try:
                     consumer.topics()   # Make sure the remote end responds
@@ -648,7 +642,6 @@ def MonitorJobs(consumer):
                     connection_alive = False
                 LOGGER.debug('Updating heartbeat table')
                 curs.execute(UPDATE_HEARTBEAT_QUERY, (connection_alive, LAST_KAFKA_MESSAGE))
-                mondb.commit()
 
                 LOGGER.debug('Sleeping')
                 time.sleep(CHECK_INTERVAL)  # Check job status at regular intervals
