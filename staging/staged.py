@@ -234,8 +234,7 @@ def create_job(job: models.NewJob):
                                                         job.notify_url,  # URL to call on success/failure
                                                         datetime.datetime.now(timezone.utc),  # created
                                                         len(pathlist)))  # total_files
-                    curs.executemany(curs,
-                                     staged_db.WRITE_FILES,
+                    curs.executemany(staged_db.WRITE_FILES,
                                      [(job.job_id, f, False, False) for f in pathlist])
             LOGGER.info('Job %d created.' % job.job_id)
 
