@@ -26,7 +26,7 @@ WHERE job_id = %s
 
 WRITE_FILES = """
 INSERT INTO files (job_id, filename, ready, error) 
-VALUES %s
+VALUES (%s, %s, %s, %s)
 """
 
 DELETE_FILES = """
