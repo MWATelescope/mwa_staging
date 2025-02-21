@@ -382,7 +382,7 @@ def job_failed(curs, job_id, total_files):
     deletelist = flist[:-100]  # Never expire the most recent 100 files (assuming job IDs get larger over time)
     for fname in deletelist:
         age = time.time() - os.stat(fname).st_mtime
-        if age > config.REPORT_EXPIREDAYS * 86400:
+        if age > float(config.REPORT_EXPIREDAYS) * 86400:
             os.remove(fname)
             LOGGER.info('Deleted old failed job report: %s' % fname)
 
@@ -593,6 +593,8 @@ def MonitorJobs(consumer):
                                         del restage_attempts[job_id]
                                 else:
                                     notify_attempts[job_id] = time.time()
+                        else:
+                            LOGGER.info('    job %d has num_files=%d, total_files=%d, completed=%s' % (job_id, num_files, total_files, completed))
 
                 mondb.commit()
 
