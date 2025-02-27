@@ -663,7 +663,8 @@ def get_failed_joblist(response:Response):
                 job_id = int(os.path.basename(fname).split('.')[0])
             except ValueError:
                 continue
-            result.jobs[job_id] = (job_id, 0, 0, 0, 0, 0, 0)
+            ftime = int(os.path.getmtime(fname))
+            result.jobs[job_id] = (job_id, ftime, 0, 0, 0, 0, 0)
 
         return result
     except Exception:
