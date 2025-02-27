@@ -6,6 +6,7 @@ This file implements the REST API for accepting requests from ASVO, and another 
 """
 
 import datetime
+import glob
 import ssl
 from datetime import timezone
 import os
@@ -638,6 +639,100 @@ def get_joblist(response:Response):
 
     finally:   # Return the DB connection
         staged_db.DBPOOL.putconn(db)
+
+
+@app.get("/get_failed_joblist/",
+         status_code=status.HTTP_200_OK,
+         responses={200:{'model':models.JobList}, 500:{'model':models.ErrorResult}})
+@app.get("/get_failed_joblist",
+         include_in_schema=False,
+         status_code=status.HTTP_200_OK,
+         responses={200:{'model':models.JobList}, 500:{'model':models.ErrorResult}})
+def get_failed_joblist(response:Response):
+    """
+    GET API to return a list of all recent failed jobs.
+    \f
+    :param response:        An instance of fastapi.Response(), used to set the status code returned
+    :return: JobList object
+    """
+    try:
+        result = models.JobList()
+        flist = glob.glob('/var/log/staging/failed/*.txt')
+        for fname in flist:
+            try:
+                job_id = int(os.path.basename(fname).split('.')[0])
+            except ValueError:
+                continue
+            result.jobs[job_id] = (job_id, 0, 0, 0, 0, 0, 0)
+
+        return result
+    except Exception:
+        response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+        exc_str = traceback.format_exc()
+        LOGGER.error('Exception getting staging job list: %s' % (exc_str,))
+        return models.ErrorResult(errormsg='Exception getting failed staging job list: %s' % (exc_str,))
+
+
+@app.get("/get_failed_job/",
+         status_code=status.HTTP_200_OK,
+         responses={200:{'model':models.JobStatus}, 404:{'model':models.ErrorResult}, 500:{'model':models.ErrorResult}})
+@app.get("/get_failed_job",
+         include_in_schema=False,
+         status_code=status.HTTP_200_OK,
+         responses={200:{'model':models.JobStatus}, 404:{'model':models.ErrorResult}, 500:{'model':models.ErrorResult}})
+def get_failed_job(job_id: int, response:Response):
+    """
+    GET API to the failure log file for a recently failed staging job. Accepts job_id
+    as a parameter in the URL, and looks up that job's data. The job status is returned as a
+    JSON dict as defined by the JobStatus class:
+
+    \f
+    :param job_id:          Integer ASVO job ID
+    :param response:        An instance of fastapi.Response(), used to set the status code returned
+    :return:                JSON dict as defined by the JobStatus() class above
+    """
+    try:
+        fname = '/var/log/staging/failed/%d.txt' % job_id
+        if not os.path.exists(fname):
+            response.status_code = status.HTTP_404_NOT_FOUND
+            return models.ErrorResult(errormsg='Failed job %d not found' % job_id)
+
+        last_mtime = int(os.path.getmtime(fname))
+        with open(fname, 'r') as f:
+            lines = f.readlines()
+
+        files = {}
+        total_files = 0
+        for line in lines:
+            if not line.strip():
+                continue
+            if line.startswith('Job failure'):
+                numlist = []
+                for part in line.strip().split():
+                    if part.strip().isdigit():
+                        numlist.append(int(part))
+                total_files = numlist[0]
+            elif line.startswith('Files'):
+                continue
+            elif line.startswith('  '):
+                filename = line.strip()
+                files[filename] = (False, True, last_mtime)   # (ready, error, readytime)
+
+        result = models.JobStatus(job_id=job_id,
+                                  created=0,
+                                  completed=False,
+                                  total_files=total_files,
+                                  ready_files=0,
+                                  error_files=len(files),
+                                  last_readytime=last_mtime,)
+        LOGGER.info("Job %d FAILURE STATUS: %s" % (job_id, result))
+        result.files = files
+        return result
+    except Exception:
+        response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+        exc_str = traceback.format_exc()
+        LOGGER.error('Exception getting status for job %d: %s' % (job_id, exc_str))
+        return models.ErrorResult(errormsg='Exception getting status for job %d: %s' % (job_id, exc_str))
 
 
 @app.post("/filestatus/",
