@@ -43,6 +43,7 @@ import glob
 import logging
 from logging import handlers
 import ssl
+import subprocess
 import threading
 import time
 import traceback
@@ -379,7 +380,7 @@ def job_failed(curs, job_id, total_files):
     deletelist = flist[:-100]  # Never expire the most recent 100 files (assuming job IDs get larger over time)
     for fname in deletelist:
         age = time.time() - os.stat(fname).st_mtime
-        if age > config.REPORT_EXPIREDAYS * 86400:
+        if age > float(config.REPORT_EXPIREDAYS) * 86400:
             os.remove(fname)
             LOGGER.info('Deleted old failed job report: %s' % fname)
 
@@ -586,8 +587,11 @@ def MonitorJobs(consumer):
                                 else:
                                     notify_attempts[job_id] = time.time()
                                     mondb.rollback()
+                        else:
+                            LOGGER.info('    job %d has num_files=%d, total_files=%d, completed=%s' % (job_id, num_files, total_files, completed))
 
-                    LOGGER.debug('Check to see if any jobs need re-staging, or have timed out while waiting for completion')
+
+                LOGGER.debug('Check to see if any jobs need re-staging, or have timed out while waiting for completion')
                 # Loop over all uncompleted jobs, to see if any need re-staging, or have timed and the client should be notified about the error
                 curs.execute("SELECT job_id, created, notify_url, completed FROM staging_jobs")
                 rows = curs.fetchall()
@@ -648,6 +652,7 @@ def MonitorJobs(consumer):
 
 
 if __name__ == '__main__':
+    hostname = subprocess.check_output(args=['hostname'], shell=False).decode('utf8').strip()
     LOGGER.info('Starting kafkad main thread.')
     while True:
         try:
@@ -658,6 +663,7 @@ if __name__ == '__main__':
                                      bootstrap_servers=[config.KAFKA_SERVER],
                                      auto_offset_reset='earliest',
                                      enable_auto_commit=False,
+                                     client_id=hostname,
                                      group_id='mwagroup',
                                      sasl_mechanism='SCRAM-SHA-256',
                                      sasl_plain_username=config.KAFKA_USER,
