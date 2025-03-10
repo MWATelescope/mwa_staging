@@ -43,6 +43,7 @@ import glob
 import logging
 from logging import handlers
 import ssl
+import subprocess
 import threading
 import time
 import traceback
@@ -663,6 +664,7 @@ def MonitorJobs(consumer):
 
 
 if __name__ == '__main__':
+    hostname = subprocess.check_output(args=['hostname'], shell=False).decode('utf8').strip()
     LOGGER.info('Starting kafkad main thread.')
     while True:
         try:
@@ -673,6 +675,7 @@ if __name__ == '__main__':
                                      bootstrap_servers=[config.KAFKA_SERVER],
                                      auto_offset_reset='earliest',
                                      enable_auto_commit=False,
+                                     client_id=hostname,
                                      group_id='mwagroup',
                                      sasl_mechanism='SCRAM-SHA-256',
                                      sasl_plain_username=config.KAFKA_USER,
