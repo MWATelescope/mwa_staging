@@ -659,7 +659,7 @@ if __name__ == '__main__':
             ssl_settings = ssl.SSLContext(ssl.PROTOCOL_TLS)
             ssl_settings.verify_mode = ssl.CERT_NONE
 
-            consumer = KafkaConsumer(topics=config.KAFKA_TOPIC,
+            consumer = KafkaConsumer(config.KAFKA_TOPIC,
                                      bootstrap_servers=[config.KAFKA_SERVER],
                                      auto_offset_reset='earliest',
                                      enable_auto_commit=False,
