@@ -205,7 +205,7 @@ export JOB_EXPIRY_TIME=691200
 
 ### API Server
 As mentioned above, users of this staging service interact with it by sending 
-web requests. Once you have the local stack running, visit 
+web requests. Once you have the 'staged' service running, visit 
 (http://localhost:8080/docs). This page is generated automatically by FastAPI 
 and includes comprehensive documentation of each of the endpoints and methods 
 provided by the FastAPI service. It also allows you to send test requests and 
@@ -220,19 +220,16 @@ it easier to adapt this code for a different telescope.
 ### PostgreSQL & PG Admin
 We make use of a local PostgreSQL server to store records related to staging 
 jobs and their associated files. You can view the table definitions in 
-./postgres/tabledefs.sql. Once your stack (development, not production) 
-stack is running, you can visit http://localhost:5050 to access the locally 
-running PG Admin, which will provide a UI to view and interact with the 
-database. 
+./postgres/tabledefs.sql.
 
 ### NGINX
-We use NGINX as a reverse proxy, which will direct traffic to the various 
-services.
+We use NGINX as a simple proxy, which will direct incoming HTTPS connections 
+from the outside world on port 443 to the FastAPI server running on port 
+8000 (localhost only), implemented in the 'staged' service running 'staged.py' 
+under uvicorn.
 
 ### HA Proxy
-This is included in the development stack in order to mirror a production 
-environment as closely as possible. As mentioned above, in the production 
-Banksia system, there are 6 so-called "vss" nodes which are running the 
+In the Banksia system, there are 6 so-called "vss" nodes which are running the 
 API. We therefore use HA Proxy on the client side to load balance requests 
 between each of these nodes. This will handle round-robin between servers, 
 and auto-retries if one of them is down.
