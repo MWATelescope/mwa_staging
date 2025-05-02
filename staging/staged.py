@@ -16,6 +16,7 @@ from datetime import timezone
 import os
 import logging
 from logging import handlers
+import time
 import traceback
 
 import urllib3.exceptions
@@ -217,11 +218,13 @@ def create_job(job: models.NewJob):
         pathlist = get_files(job.obs)
 
     if pathlist is None:
+        time.sleep(2.0)
         send_result(notify_url=job.notify_url,
                     job_id=job.job_id,
                     return_code=JOB_FILE_LOOKUP_FAILED,
                     comment='Failed to get files associated with the given observation.')
     elif not pathlist:
+        time.sleep(2.0)
         send_result(notify_url=job.notify_url,
                     job_id=job.job_id,
                     return_code=JOB_NO_FILES,
@@ -259,6 +262,7 @@ def create_job(job: models.NewJob):
             LOGGER.error('Scout server not responding to %s in create_job' % config.SCOUT_STAGE_URL)
         except:
             exc_str = traceback.format_exc()
+            time.sleep(2.0)
             send_result(notify_url=job.notify_url,
                         job_id=job.job_id,
                         return_code=JOB_CREATION_EXCEPTION,
