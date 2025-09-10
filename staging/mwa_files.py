@@ -57,7 +57,7 @@ def get_mwa_files(obs: MWAObservation):
             'all_files': False}     # Ignore files that have been archived, and have not been deleted
 
     try:
-        result = requests.get(DATA_FILES_URL + '?obs_id=%d' % obs.obs_id, data=data)
+        result = requests.post(DATA_FILES_URL + '?obs_id=%d' % obs.obs_id, data=data)
     except requests.Timeout:
         LOGGER.error('Timout calling %s' % (DATA_FILES_URL + '?obs_id=%d' % obs.obs_id))
         return None
