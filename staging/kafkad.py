@@ -339,7 +339,7 @@ def HandleMessages(consumer):
                     LOGGER.info('File %s staged, updated %d rows in files table' % (filename, rowcount))
                 LAST_KAFKA_MESSAGE = datetime.datetime.utcnow()
             else:
-                pass
+                LOGGER.warning('Unexpected filename message received: %s' % filename)
         except:
             LOGGER.error(traceback.format_exc())
             LOGGER.error('Exiting!')
@@ -665,7 +665,7 @@ if __name__ == '__main__':
                                      enable_auto_commit=False,
                                      client_id=hostname,
                                      group_id='mwagroup',
-                                     sasl_mechanism='SCRAM-SHA-256',
+                                     sasl_mechanism='SCRAM-SHA-512',
                                      sasl_plain_username=config.KAFKA_USER,
                                      sasl_plain_password=config.KAFKA_PASSWORD,
                                      security_protocol='SASL_SSL',

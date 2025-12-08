@@ -50,20 +50,21 @@ def get_mwa_files(obs: MWAObservation):
     else:
         mintime = None
         maxtime = None
-    data = {'location': 3,          # Must be on tape (Banksia)
+    data = {'obs_id': obs.obs_id,   # Return files associated with this obs_id
+            'location': 3,          # Must be on tape (Banksia)
             'mintime': mintime,     # For VCS observations, only return files for at or after this time
             'maxtime': maxtime,     # For VCS observations, only return files for before this time.
             'terse': True,          # Only return bucket, folder, and filename
             'all_files': False}     # Ignore files that have been archived, and have not been deleted
 
     try:
-        result = requests.get(DATA_FILES_URL + '?obs_id=%d' % obs.obs_id, data)
+        result = requests.get(DATA_FILES_URL, data)
     except requests.Timeout:
-        LOGGER.error('Timout calling %s' % (DATA_FILES_URL + '?obs_id=%d' % obs.obs_id))
+        LOGGER.error('Timout calling %s' % DATA_FILES_URL)
         return None
     except requests.RequestException:
-        LOGGER.error('Exception calling %s: %s' % (DATA_FILES_URL + '?obs_id=%d' % obs.obs_id, traceback.format_exc()))
-        return
+        LOGGER.error('Exception calling %s: %s' % (DATA_FILES_URL, traceback.format_exc()))
+        return None
 
     if result.status_code == 200:
         pathlist = []
