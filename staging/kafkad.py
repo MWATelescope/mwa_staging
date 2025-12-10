@@ -196,6 +196,8 @@ def get_scout_token(refresh: bool = False):
         if result.status_code == 200:
             SCOUT_API_TOKEN = result.json()['response']
             return SCOUT_API_TOKEN
+        else:
+            return None
 
 
 def send_result(notify_url,
@@ -231,22 +233,23 @@ def send_result(notify_url,
         return None
     except ConnectionRefusedError:
         LOGGER.error('Connection refused for job %d calling notify_url %s' % (job_id, notify_url))
-        return
+        return None
     except urllib3.exceptions.NewConnectionError:
         LOGGER.error('"urllib3.exceptions.NewConnectionError" exception for job %d calling notify_url %s' % (job_id, notify_url))
-        return
+        return None
     except urllib3.exceptions.MaxRetryError:
         LOGGER.error('"urllib3.exceptions.MaxRetryError" exception for job %d calling notify_url %s' % (job_id, notify_url))
-        return
+        return None
     except requests.exceptions.ConnectionError:
         LOGGER.error('"requests.exceptions.ConnectionError" exception for job %d calling notify_url %s' % (job_id, notify_url))
-        return
+        return None
     except:
         LOGGER.error('Exception for job %d calling notify_url %s: %s' % (job_id, notify_url, traceback.format_exc()))
-        return
+        return None
 
     if result.status_code != 200:
         LOGGER.error('Error %d returned for job %d when calling notify_url: %s' % (result.status_code, job_id, result.text))
+        return None
     else:
         return True
 
@@ -363,7 +366,7 @@ def job_failed(curs, job_id, total_files):
     :param curs: Psycopg2 database cursor object
     :param job_id: Integer job ID
     :param total_files: Number of files in the job, in total
-    :return: True if the write succeeded, False otherwise.
+    :return: True if writing the file succeeded, False otherwise.
     """
     LOGGER.debug('Called job_failed for job %d' % job_id)
     outdir = os.path.join(config.STAGING_LOGDIR, 'failed')
@@ -551,8 +554,8 @@ def MonitorJobs(consumer):
     :return:
     """
     notify_attempts = {}    # Dict with job_id as the key, and unix timestamp as the value for the last attempt
-    restage_attempts = {}   # Dict with job_id as the key, and unix timestamp for the last time a 're-stage files' call
-                            # was made as the value
+    restage_attempts = {}   # Dict with job_id as the key, and unix timestamp for the last time a 're-stage files' call was made as the value
+
     mondb = psycopg2.connect(user=config.DBUSER,
                              password=config.DBPASSWORD,
                              host=config.DBHOST,
@@ -640,8 +643,8 @@ def MonitorJobs(consumer):
                     elif (not completed) and (last_stage > config.FILE_RESTAGE_INTERVAL):
                         LOGGER.info('Restaging job %d' % job_id)
                         ok = restage_job(curs=curs, job_id=job_id)
+                        restage_attempts[job_id] = time.time()
                         if ok:
-                            restage_attempts[job_id] = time.time()
                             LOGGER.info('Restaging job %d succeeded' % job_id)
                         else:
                             LOGGER.info('Restaging job %d failed' % job_id)
