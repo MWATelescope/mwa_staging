@@ -677,7 +677,7 @@ if __name__ == '__main__':
                                      enable_auto_commit=False,
                                      client_id=hostname,
                                      group_id='mwagroup',
-                                     sasl_mechanism='SCRAM-SHA-256',
+                                     sasl_mechanism='SCRAM-SHA-512',
                                      sasl_plain_username=config.KAFKA_USER,
                                      sasl_plain_password=config.KAFKA_PASSWORD,
                                      security_protocol='SASL_SSL',
