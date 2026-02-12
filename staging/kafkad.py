@@ -227,7 +227,7 @@ def send_result(notify_url,
             'comment':comment}
     try:
         LOGGER.info("Sending result for job %d to URL %s as user %s" % (job_id, notify_url, config.RESULT_USERNAME))
-        result = requests.post(notify_url, json=data, auth=(config.RESULT_USERNAME, config.RESULT_PASSWORD), verify=False)
+        result = requests.post(notify_url, json=data, auth=(config.RESULT_USERNAME, config.RESULT_PASSWORD), verify=False, timeout=60)
     except requests.Timeout:
         LOGGER.error('Timout for job %d calling notify_url: %s' % (job_id, notify_url))
         return None
