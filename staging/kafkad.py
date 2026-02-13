@@ -575,7 +575,7 @@ def MonitorJobs(consumer):
                                     del restage_attempts[job_id]
                             else:
                                 notify_attempts[job_id] = time.time()
-                                mondb.rollback()
+                                # mondb.rollback()
                     else:
                         if (num_files == total_files):  # If all the files are either 'ready' or 'error', mark it as complete
                             LOGGER.info('    job %d marked as complete.' % job_id)
@@ -589,10 +589,9 @@ def MonitorJobs(consumer):
                                         del restage_attempts[job_id]
                                 else:
                                     notify_attempts[job_id] = time.time()
-                                    mondb.rollback()
+                                    # mondb.rollback()
                         else:
                             LOGGER.info('    job %d has num_files=%d, total_files=%d, completed=%s' % (job_id, num_files, total_files, completed))
-
 
                 LOGGER.debug('Check to see if any jobs need re-staging, or have timed out while waiting for completion')
                 # Loop over all uncompleted jobs, to see if any need re-staging, or have timed and the client should be notified about the error
