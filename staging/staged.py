@@ -215,6 +215,7 @@ def create_job(job: models.NewJob):
     if job.files:
         pathlist = job.files
     elif job.obs:
+        LOGGER.debug('Getting files via web service for job %s, obsid %s' % (job.job_id, job.obs.obs_id))
         pathlist = get_files(job.obs)
 
     if pathlist is None:
