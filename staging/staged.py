@@ -560,11 +560,11 @@ def get_stats(response:Response):
                 waiting_files = curs.fetchall()[0][0]
 
         if kafkad_heartbeat is not None:
-            hb = int(kafkad_heartbeat.timestamp())
+            hb = int(kafkad_heartbeat.timestamp()) + 28800   # Convert to AWST timestamp
         else:
             hb = None
         if last_message is not None:
-            lm = int(last_message.timestamp())
+            lm = int(last_message.timestamp()) + 28800   # Convert to AWST timestamp
         else:
             lm = None
 
@@ -644,8 +644,8 @@ def get_joblist(response:Response):
             with db.cursor() as curs:
                 curs.execute(staged_db.LIST_JOBS_NEW)
                 for row in curs.fetchall():
-                    job_id, created, staged_files, total_files, completed, last_readytime, error_files = row
-                    result.jobs[job_id] = (job_id, created, staged_files, total_files, completed, last_readytime, error_files)
+                    job_id, created, staged_files, total_files, completed, last_readytime, error_files, filename = row
+                    result.jobs[job_id] = (job_id, created, staged_files, total_files, completed, last_readytime, error_files, filename)
 
         return result
     except Exception:
