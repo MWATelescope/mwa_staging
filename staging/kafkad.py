@@ -111,6 +111,9 @@ requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
 CHECK_INTERVAL = 60        # Check all job status details once every minute.
 RETRY_INTERVAL = 600       # Re-try notifying ASVO about completed jobs every 10 minutes until we succeed
 
+LAST_CALLBACK_TMESTAMP = 0.0    # Hold last timetamp that send_result() was last called
+MAX_CALLBACKS_PER_MINUTE = 200
+
 # All jobs that haven't been notified as finished, that have at least one 'ready' file
 COMPLETION_QUERY = """
 SELECT files.job_id, count(*), staging_jobs.total_files, staging_jobs.completed,
@@ -225,6 +228,13 @@ def send_result(notify_url,
             'ready_files':ready_files,
             'error_files':error_files,
             'comment':comment}
+
+    now = time.time()
+    if (now - LAST_CALLBACK_TMESTAMP) < (60.0 / MAX_CALLBACKS_PER_MINUTE):
+        delay = LAST_CALLBACK_TMESTAMP + (60.0 / MAX_CALLBACKS_PER_MINUTE) - now
+        LOGGER.info('Waiting for %d seconds to rate-limit ASVO callbacks to %d/minute' % (delay, MAX_CALLBACKS_PER_MINUTE))
+        time.sleep(delay)
+
     try:
         LOGGER.info("Sending result for job %d to URL %s as user %s" % (job_id, notify_url, config.RESULT_USERNAME))
         result = requests.post(notify_url, json=data, auth=(config.RESULT_USERNAME, config.RESULT_PASSWORD), verify=False, timeout=60)
