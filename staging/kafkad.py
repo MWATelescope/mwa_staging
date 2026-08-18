@@ -658,7 +658,7 @@ def MonitorJobs(consumer):
                     connection_alive = True
                 except errors.KafkaError:
                     connection_alive = False
-                LOGGER.debug('Updating heartbeat table')
+                LOGGER.debug('Updating heartbeat table at %d with connection_alive=%s and LAST_KAFKA_MESSAGE=%s' % (time.time(), connection_alive, LAST_KAFKA_MESSAGE))
                 curs.execute(UPDATE_HEARTBEAT_QUERY, (connection_alive, LAST_KAFKA_MESSAGE))
 
                 LOGGER.debug('Sleeping')
