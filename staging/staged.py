@@ -559,7 +559,6 @@ def get_stats(response:Response):
                 curs.execute("SELECT count(*) FROM files WHERE not ready and not error")
                 waiting_files = curs.fetchall()[0][0]
 
-        LOGGER.info('Kafkad heartbeat at %s: kafkad_heartbeat=%s, last_message=%s, kafka_alive=%s' % (time.time(), kafkad_heartbeat, last_message, kafka_alive))
 
         if kafkad_heartbeat is not None:
             hb = int(kafkad_heartbeat.timestamp())
@@ -569,6 +568,8 @@ def get_stats(response:Response):
             lm = int(last_message.timestamp())
         else:
             lm = None
+
+        LOGGER.info('Kafkad heartbeat at %s: kafkad_heartbeat=%s(%s), last_message=%s(%s), kafka_alive=%s' % (time.time(), hb, kafkad_heartbeat, lm, last_message, kafka_alive))
 
         try:
             result = models.GlobalStatistics(kafkad_heartbeat=hb,
