@@ -222,6 +222,7 @@ def send_result(notify_url,
     :param comment: Human readable string (eg error messages)
     :return:
     """
+    global LAST_CALLBACK_TMESTAMP
     data = {'job_id':job_id,
             'return_code':return_code,
             'total_files':total_files,
@@ -237,6 +238,7 @@ def send_result(notify_url,
 
     try:
         LOGGER.info("Sending result for job %d to URL %s as user %s" % (job_id, notify_url, config.RESULT_USERNAME))
+        LAST_CALLBACK_TMESTAMP = time.time()
         result = requests.post(notify_url, json=data, auth=(config.RESULT_USERNAME, config.RESULT_PASSWORD), verify=False, timeout=60)
     except requests.Timeout:
         LOGGER.error('Timout for job %d calling notify_url: %s' % (job_id, notify_url))
