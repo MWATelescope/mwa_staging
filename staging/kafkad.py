@@ -143,7 +143,7 @@ WHERE true
 
 
 # When the most recent valid Kafka file status message was processed
-LAST_KAFKA_MESSAGE = datetime.datetime.utcnow()
+LAST_KAFKA_MESSAGE = datetime.datetime.now(datetime.UTC)
 
 SCOUT_API_TOKEN = ''
 
@@ -352,7 +352,7 @@ def HandleMessages(consumer):
                     LOGGER.warning('File %s error: %s. Updated %d rows in files table' % (filename, processing_errors, rowcount))
                 else:
                     LOGGER.info('File %s staged, updated %d rows in files table' % (filename, rowcount))
-                LAST_KAFKA_MESSAGE = datetime.datetime.utcnow()
+                LAST_KAFKA_MESSAGE = datetime.datetime.now(datetime.UTC)
             else:
                 LOGGER.warning('Unexpected filename message received: %s' % filename)
         except:
@@ -611,7 +611,7 @@ def MonitorJobs(consumer):
                 rows = curs.fetchall()
                 for job_id, created, notify_url, completed in rows:
                     LOGGER.debug('Checking job %d' % job_id)
-                    job_age = (datetime.datetime.now(timezone.utc) - created).total_seconds()
+                    job_age = (datetime.datetime.now(datetime.UTC) - created).total_seconds()
                     last_stage = min((time.time() - restage_attempts.get(job_id, 0)), job_age)
                     if completed:
                         LOGGER.debug("Completed Job %d is %d seconds old, and was last staged %d seconds ago." % (job_id,

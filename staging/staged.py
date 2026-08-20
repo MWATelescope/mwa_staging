@@ -237,7 +237,7 @@ def create_job(job: models.NewJob):
                 with db.cursor() as curs:
                     curs.execute(staged_db.CREATE_JOB, (job.job_id,  # job_id
                                                         job.notify_url,  # URL to call on success/failure
-                                                        datetime.datetime.now(timezone.utc),  # created
+                                                        datetime.datetime.now(datetime.UTC),  # created
                                                         len(pathlist)))  # total_files
                     curs.executemany(staged_db.WRITE_FILES,
                                      [(job.job_id, f, False, False) for f in pathlist])
