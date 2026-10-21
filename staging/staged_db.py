@@ -1,7 +1,5 @@
 
-"""
-Database handling code and some query definitions, for staged.py
-"""
+"""Database handling code and some query definitions, for staged.py"""
 
 from threading import Semaphore
 
@@ -87,11 +85,13 @@ WHERE (SELECT count(*)
 
 
 def initdb(config):
-    """
-    Initialise a connection pool to the database.
+    """Initialise a connection pool to the database.
 
-    :param config: A Config object containing database connection paramters
-    :return: None
+    Args:
+        config: A Config object containing database connection paramters
+
+    Returns:
+        None
     """
     global DBPOOL
     DBPOOL = psycopg_pool.ConnectionPool('postgresql://%s:%s@%s/%s' % (config.DBUSER, config.DBPASSWORD, config.DBHOST, config.DBNAME),

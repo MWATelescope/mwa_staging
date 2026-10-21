@@ -1,5 +1,4 @@
-"""
-Staging daemon, to take requests for files from ASVO, request those files from the tape system, listen for Kafka
+"""Staging daemon, to take requests for files from ASVO, request those files from the tape system, listen for Kafka
 messages about those files, and return the results to ASVO.
 
 This file implements the REST API for accepting requests from ASVO, and another process will handle Kafka messages.
@@ -36,8 +35,7 @@ requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
 
 
 class ApiConfig():
-    """Config class, used to load configuration data from environment variables.
-    """
+    """Config class, used to load configuration data from environment variables."""
 
     def __init__(self):
         self.DBUSER = os.getenv('DBUSER')
@@ -105,19 +103,21 @@ class ScoutAuth(AuthBase):
        requests.
     """
     def __init__(self, token):
-        """
-        Store the API token
+        """Store the API token
 
-        :param token: token string from Scout's /v1/security/login endpoint
+        Args:
+            token: token string from Scout's /v1/security/login endpoint
         """
         self.token = token
 
     def __call__(self, r):
-        """
-        Modify the request by adding the Scout token to the header
+        """Modify the request by adding the Scout token to the header
 
-        :param r: request object
-        :return: modified request object
+        Args:
+            r: request object
+
+        Returns:
+            modified request object
         """
         r.headers['Authorization'] = 'Bearer %s' % self.token
         return r
@@ -127,12 +127,15 @@ class ScoutAuth(AuthBase):
 # Utility functions
 
 def get_scout_token(refresh: bool = False):
-    """
-    Pass the Scout username/password to the SCOUT_LOGIN_URL, and return a token to use for
+    """Pass the Scout username/password to the SCOUT_LOGIN_URL, and return a token to use for
     subsequent queries.
 
-    :param refresh: boolean, if True, the cached value of the token won't be used.
-    :return: token string
+    Args:
+        refresh: boolean, if True, the cached value of the token won't
+            be used.
+
+    Returns:
+        token string
     """
     global SCOUT_API_TOKEN
     if SCOUT_API_TOKEN and (not refresh):
@@ -156,17 +159,16 @@ def send_result(notify_url,
                 ready_files=0,
                 error_files=0,
                 comment=''):
-    """
-    Call the given URL to report the success or failure of a job, passing a JobResult structure
+    """Call the given URL to report the success or failure of a job, passing a JobResult structure
 
-    :param notify_url: URL to send job result to
-    :param job_id: Integer job ID
-    :param return_code: Integer return code, eg JOB_SUCCESS=0
-    :param total_files: Total number of files in job
-    :param ready_files: Number of files successfully staged
-    :param error_files: Number of files where Kafka returned an error
-    :param comment: Human readable string (eg error messages)
-    :return:
+    Args:
+        notify_url: URL to send job result to
+        job_id: Integer job ID
+        return_code: Integer return code, eg JOB_SUCCESS=0
+        total_files: Total number of files in job
+        ready_files: Number of files successfully staged
+        error_files: Number of files where Kafka returned an error
+        comment: Human readable string (eg error messages)
     """
     data = {'job_id':job_id,
             'return_code':return_code,
@@ -191,8 +193,7 @@ def send_result(notify_url,
 
 
 def create_job(job: models.NewJob):
-    """
-    Carries out the actual job of finding out what files are to include in the job, asking Scout to stage those
+    """Carries out the actual job of finding out what files are to include in the job, asking Scout to stage those
     files, and creating the new job record in the database. Runs in the background after the new_job endpoint
     has returned.
 
@@ -207,8 +208,12 @@ def create_job(job: models.NewJob):
         JOB_SCOUT_CALL_FAILED
         JOB_CREATION_EXCEPTION
 
-    :param job: An instance of the NewJob() class.
-    :return: None - runs in the background after the new_job endpoint has already returned.
+    Args:
+        job: An instance of the NewJob() class.
+
+    Returns:
+        None - runs in the background after the new_job endpoint has
+        already returned.
     """
     LOGGER.info('Starting create_job callback with job_id: %d' % job.job_id)
     pathlist = []
@@ -285,15 +290,13 @@ app = FastAPI()
 
 @app.on_event("startup")
 async def startup():
-    """Run on FastAPI startup, to create a Postgres connection pool.
-    """
+    """Run on FastAPI startup, to create a Postgres connection pool."""
     staged_db.initdb(config)
 
 
 @app.on_event("shutdown")
 async def shutdown():
-    """Run on FastAPI shutdown, to close all of the connections in the Postgres connection pool.
-    """
+    """Run on FastAPI shutdown, to close all of the connections in the Postgres connection pool."""
     staged_db.DBPOOL.close()
 
 
@@ -305,8 +308,7 @@ async def shutdown():
           status_code=status.HTTP_202_ACCEPTED,
           responses={403:{'model': models.ErrorResult}, 500:{'model': models.ErrorResult}, 502:{'model': models.ErrorResult}})
 async def new_job(job: models.NewJob, background_tasks: BackgroundTasks, response:Response):
-    """
-    POST API to create a new staging job. Accepts a JSON dictionary defined above by the Job() class,
+    """POST API to create a new staging job. Accepts a JSON dictionary defined above by the Job() class,
     which is processed by FastAPI and passed to this function as an actual instance of the Job() class.
 
     Attributes for the job object are job_id (integer), files (list of filenames), notify_url (URL to call to notify the
@@ -323,11 +325,18 @@ async def new_job(job: models.NewJob, background_tasks: BackgroundTasks, respons
 
     Any errors in the background job creation process will be returned by calling job.notify_url
     \f
-    :param job: An instance of the Job() class. Job.job_id is the new job ID, Job.files is a list of file names.
-                job.obs is a telescope-specific structure defining an observation.
-    :param background_tasks: An object to which this function can add tasks to be carried out in the background.
-    :param response: An instance of fastapi.Response(), used to set the status code returned
-    :return: None
+
+    Args:
+        job: An instance of the Job() class. Job.job_id is the new job
+            ID, Job.files is a list of file names. job.obs is a
+            telescope-specific structure defining an observation.
+        background_tasks: An object to which this function can add tasks
+            to be carried out in the background.
+        response: An instance of fastapi.Response(), used to set the
+            status code returned
+
+    Returns:
+        None
     """
     LOGGER.info('Called new_job with job %d' % job.job_id)
     db = staged_db.DBPOOL.getconn()
@@ -368,18 +377,23 @@ async def new_job(job: models.NewJob, background_tasks: BackgroundTasks, respons
          status_code=status.HTTP_200_OK,
          responses={200:{'model':models.JobStatus}, 404:{'model':models.ErrorResult}, 500:{'model':models.ErrorResult}})
 def read_status(job_id: int, response:Response, include_files: bool = False):
-    """
-    GET API to read status details about an existing staging job. Accepts job_id and (optional) include_files
+    """GET API to read status details about an existing staging job. Accepts job_id and (optional) include_files
     as parameters in the URL, and looks up that job's data. The job status is returned as a
     JSON dict as defined by the JobStatus class:
 
     If you pass True in the 'include_files' parameter, then a complete list of all files in the job will be returned
     in the status structure, as a dictionary, with filename as key, and tuples of (ready, error, readytime) as values.
     \f
-    :param job_id:          Integer ASVO job ID
-    :param include_files:   Pass True if the complete list of files should be included in the result
-    :param response:        An instance of fastapi.Response(), used to set the status code returned
-    :return:                JSON dict as defined by the JobStatus() class above
+
+    Args:
+        job_id: Integer ASVO job ID
+        include_files: Pass True if the complete list of files should be
+            included in the result
+        response: An instance of fastapi.Response(), used to set the
+            status code returned
+
+    Returns:
+        JSON dict as defined by the JobStatus() class above
     """
     db = staged_db.DBPOOL.getconn()
     try:
@@ -447,12 +461,16 @@ def read_status(job_id: int, response:Response, include_files: bool = False):
             status_code=status.HTTP_200_OK,
             responses={404:{'model':models.ErrorResult}, 500:{'model':models.ErrorResult}})
 def delete_job(job_id: int, response:Response):
-    """
-    POST API to delete a staging job. Accepts an integer job_id value, to be deleted.
+    """POST API to delete a staging job. Accepts an integer job_id value, to be deleted.
     \f
-    :param job_id:    # Integer ASVO job ID
-    :param response:  # An instance of fastapi.Response(), used to set the status code returned
-    :return: None
+
+    Args:
+        job_id: # Integer ASVO job ID
+        response: # An instance of fastapi.Response(), used to set the
+            status code returned
+
+    Returns:
+        None
     """
     LOGGER.info('Called delete_job with job_id %d' % job_id)
     db = staged_db.DBPOOL.getconn()
@@ -502,21 +520,24 @@ def delete_job(job_id: int, response:Response):
 @app.get("/ping/")
 @app.get("/ping", include_in_schema=False)
 def ping():
-    """
-    GET API to return nothing, with a 200 status code, to show that we are alive.
+    """GET API to return nothing, with a 200 status code, to show that we are alive.
     \f
-    :return: None
+
+    Returns:
+        None
     """
     LOGGER.info('Ping called.')
     return
 
 
 def sanitise(value):
-    """
-    Take a value returned from Scout, and if it's not None, convert from string to integer.
+    """Take a value returned from Scout, and if it's not None, convert from string to integer.
 
-    :param value: String representation of an integer, or None
-    :return: integer, or None
+    Args:
+        value: String representation of an integer, or None
+
+    Returns:
+        integer, or None
     """
     if value is not None:
         try:
@@ -535,12 +556,16 @@ def sanitise(value):
          status_code=status.HTTP_200_OK,
          responses={200:{'model':models.GlobalStatistics}, 500:{'model':models.ErrorResult}})
 def get_stats(response:Response):
-    """
-    GET API to return an overall job and file statistics for this process (the staging web server)
+    """GET API to return an overall job and file statistics for this process (the staging web server)
     and the Kafka daemon (kafkad.py)
     \f
-    :param response:        An instance of fastapi.Response(), used to set the status code returned
-    :return: GlobalStatus object
+
+    Args:
+        response: An instance of fastapi.Response(), used to set the
+            status code returned
+
+    Returns:
+        GlobalStatus object
     """
     db = staged_db.DBPOOL.getconn()
     try:
@@ -632,12 +657,16 @@ def get_stats(response:Response):
          status_code=status.HTTP_200_OK,
          responses={200:{'model':models.JobList}, 500:{'model':models.ErrorResult}})
 def get_joblist(response:Response):
-    """
-    GET API to return a list of all jobs, giving the number of staged files, the total number of files, and the
+    """GET API to return a list of all jobs, giving the number of staged files, the total number of files, and the
     completed status flag for each job.
     \f
-    :param response:        An instance of fastapi.Response(), used to set the status code returned
-    :return: JobList object
+
+    Args:
+        response: An instance of fastapi.Response(), used to set the
+            status code returned
+
+    Returns:
+        JobList object
     """
     db = staged_db.DBPOOL.getconn()
     try:
@@ -668,11 +697,15 @@ def get_joblist(response:Response):
          status_code=status.HTTP_200_OK,
          responses={200:{'model':models.JobList}, 500:{'model':models.ErrorResult}})
 def get_failed_joblist(response:Response):
-    """
-    GET API to return a list of all recent failed jobs.
+    """GET API to return a list of all recent failed jobs.
     \f
-    :param response:        An instance of fastapi.Response(), used to set the status code returned
-    :return: JobList object
+
+    Args:
+        response: An instance of fastapi.Response(), used to set the
+            status code returned
+
+    Returns:
+        JobList object
     """
     try:
         result = models.JobList()
@@ -701,15 +734,19 @@ def get_failed_joblist(response:Response):
          status_code=status.HTTP_200_OK,
          responses={200:{'model':models.JobStatus}, 404:{'model':models.ErrorResult}, 500:{'model':models.ErrorResult}})
 def get_failed_job(job_id: int, response:Response):
-    """
-    GET API to the failure log file for a recently failed staging job. Accepts job_id
+    """GET API to the failure log file for a recently failed staging job. Accepts job_id
     as a parameter in the URL, and looks up that job's data. The job status is returned as a
     JSON dict as defined by the JobStatus class:
 
     \f
-    :param job_id:          Integer ASVO job ID
-    :param response:        An instance of fastapi.Response(), used to set the status code returned
-    :return:                JSON dict as defined by the JobStatus() class above
+
+    Args:
+        job_id: Integer ASVO job ID
+        response: An instance of fastapi.Response(), used to set the
+            status code returned
+
+    Returns:
+        JSON dict as defined by the JobStatus() class above
     """
     try:
         fname = '/var/log/staging/failed/%d.txt' % job_id
@@ -765,8 +802,7 @@ def get_failed_job(job_id: int, response:Response):
           responses={200: {'model': models.FileStatusResult}, 404: {'model': models.ErrorResult},
                      500: {'model': models.ErrorResult}})
 async def file_status(data: models.FileStatus, response: Response):
-    """
-    GET API to return the status of one or more files, using the Scout API to query the
+    """GET API to return the status of one or more files, using the Scout API to query the
     file status. The structure returned is a dict, with filename as key, and a boolean
     as value. The boolean wiill be True if all blocks in that file have been staged, or
     False if some blocks are missing.
@@ -777,9 +813,15 @@ async def file_status(data: models.FileStatus, response: Response):
         500 if there is an exception.
 
     \f
-    :param data: A structure containing one member, 'files', containing a list of filenames
-    :param response: An instance of fastapi.Response(), used to set the status code returned
-    :return: None
+
+    Args:
+        data: A structure containing one member, 'files', containing a
+            list of filenames
+        response: An instance of fastapi.Response(), used to set the
+            status code returned
+
+    Returns:
+        None
     """
     try:
         allresults = {}
@@ -820,12 +862,16 @@ async def file_status(data: models.FileStatus, response: Response):
           status_code=status.HTTP_200_OK,
           response_model=models.ScoutLoginResponse)
 def dummy_scout_login(account: models.ScoutLogin, response:Response):
-    """
-    Emulate Scout API for development. Takes an account name and password, returns a token string.
+    """Emulate Scout API for development. Takes an account name and password, returns a token string.
     \f
-    :param account: ScoutLogin (keys are 'acct' and 'pass')
-    :param response:        An instance of fastapi.Response(), used to set the status code returned
-    :return: Token string in a dict, with key 'response'
+
+    Args:
+        account: ScoutLogin (keys are 'acct' and 'pass')
+        response: An instance of fastapi.Response(), used to set the
+            status code returned
+
+    Returns:
+        Token string in a dict, with key 'response'
     """
     if (account.acct == config.SCOUT_API_USER) and (account.passwd == config.SCOUT_API_PASSWORD):
         LOGGER.info('Pretending be Scout: /v1/security/login passed, returning token')
@@ -842,15 +888,21 @@ def dummy_scout_login(account: models.ScoutLogin, response:Response):
           include_in_schema=False,
           status_code=status.HTTP_200_OK)
 def dummy_scout_stage(stagedata: models.StageFiles, request:Request, response:Response):
-    """
-    Emulate Scout's staging server for development. 'Stages' the files passed in the list of filenames.
+    """Emulate Scout's staging server for development. 'Stages' the files passed in the list of filenames.
 
     Always returns 200/OK and ignores the file list.
     \f
-    :param stagedata: An instance of StageFiles containing the file list to stage
-    :param request: FastAPI request object, so we can check for the right token
-    :param response:        An instance of fastapi.Response(), used to set the status code returned
-    :return: None
+
+    Args:
+        stagedata: An instance of StageFiles containing the file list to
+            stage
+        request: FastAPI request object, so we can check for the right
+            token
+        response: An instance of fastapi.Response(), used to set the
+            status code returned
+
+    Returns:
+        None
     """
     if request.headers['Authorization'] == 'Bearer %s' % DUMMY_TOKEN:
         LOGGER.info("Pretending be Scout: /v1/request/batchstage succeeded: %s" % (stagedata.path,))
@@ -867,16 +919,22 @@ def dummy_scout_stage(stagedata: models.StageFiles, request:Request, response:Re
          status_code=status.HTTP_200_OK,
          response_model=models.ScoutFileStatus)
 def dummy_scout_status(request:Request, response:Response, path: str = Query(...)):
-    """
-    Emulate Scout's staging server for development. Returns a status structure for the given (single) file.
+    """Emulate Scout's staging server for development. Returns a status structure for the given (single) file.
 
     Returns a dummy status for the file specified - if the filename starts with 'offline_', then the status
     for the file has 1 block still offline, otherwise the status shows the file is online.
     \f
-    :param path: Filename to check the status for. If it starts with 'offline_', then the returned status will be offline
-    :param request: FastAPI request object, so we can check for the right token
-    :param response:        An instance of fastapi.Response(), used to set the status code returned
-    :return: None
+
+    Args:
+        path: Filename to check the status for. If it starts with
+            'offline_', then the returned status will be offline
+        request: FastAPI request object, so we can check for the right
+            token
+        response: An instance of fastapi.Response(), used to set the
+            status code returned
+
+    Returns:
+        None
     """
     if request.headers['Authorization'] == 'Bearer %s' % DUMMY_TOKEN:
         resp = models.ScoutFileStatus(path=path)
@@ -904,13 +962,16 @@ def dummy_scout_status(request:Request, response:Response, path: str = Query(...
           include_in_schema=False,
           status_code=status.HTTP_200_OK)
 def dummy_asvo(result: models.JobResult):
-    """
-    Emulate ASVO server for development. Used to pass a job result back to ASVO, when all files are staged, or when
+    """Emulate ASVO server for development. Used to pass a job result back to ASVO, when all files are staged, or when
     the job times out.
 
     Always returns 200/OK.
     \f
-    :param result: An instance of JobResult
-    :return: None
+
+    Args:
+        result: An instance of JobResult
+
+    Returns:
+        None
     """
     LOGGER.info("Pretending to be ASVO: Job result received: %s" % (result,))

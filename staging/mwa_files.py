@@ -1,5 +1,4 @@
-"""
-Library to handle turning an observation ID to a list of MWA files making up
+"""Library to handle turning an observation ID to a list of MWA files making up
 that observation. Other telescopes using the staging code would substitute an alternate
 library defining the same class and function, and import that from staged instead of
 mwa_files.
@@ -21,8 +20,7 @@ LOGGER = logging.getLogger('mwa_files')
 
 
 class MWAObservation(BaseModel):
-    """
-    Used by the 'new job' endpoint to pass in an MWA obsid plus optional start time and duration. Note that if
+    """Used by the 'new job' endpoint to pass in an MWA obsid plus optional start time and duration. Note that if
     start_time and duration are specified for a non-VCS observation, then no files will be returned (the filenames
     have a different format). If start_time and duration are zero, they default to the beginning of the observation
     and 9999999999 respectively, for VCS observations.
@@ -37,12 +35,14 @@ class MWAObservation(BaseModel):
 
 
 def get_mwa_files(obs: MWAObservation):
-    """
-    Given an MWAObservation structure defining an MWA observation (obsid, and for VCS observations, a start time for
+    """Given an MWAObservation structure defining an MWA observation (obsid, and for VCS observations, a start time for
     the first file, and duration from that starttime), return a list of file names to stage.
 
-    :param obs: Defines an MWA observation
-    :return: A list of file names
+    Args:
+        obs: Defines an MWA observation
+
+    Returns:
+        A list of file names
     """
     if obs.start_time and obs.duration:
         mintime = obs.start_time

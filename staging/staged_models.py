@@ -12,8 +12,7 @@ from mwa_files import MWAObservation as Observation
 
 
 class NewJob(BaseModel):
-    """
-    Used by the 'new job' endpoint to pass in the job ID and either a list of files, or a telescope specific structure
+    """Used by the 'new job' endpoint to pass in the job ID and either a list of files, or a telescope specific structure
     defining an observation, where all files that are part of that observation should be staged.
 
     job_id:      Integer staging job ID\n
@@ -27,8 +26,7 @@ class NewJob(BaseModel):
 
 
 class FileStatus(BaseModel):
-    """
-    Used by the 'File status' endpoint to pass in the a list of files.
+    """Used by the 'File status' endpoint to pass in the a list of files.
 
     files:       A list of filenames, including full paths\n
     """
@@ -36,8 +34,7 @@ class FileStatus(BaseModel):
 
 
 class FileStatusResult(BaseModel):
-    """
-    Used by the 'File status' endpoint to return the status of the queried files
+    """Used by the 'File status' endpoint to return the status of the queried files
 
     allresults:   A dictionary with filename as key, and a boolean (True if the file is staged) as value
     """
@@ -45,8 +42,7 @@ class FileStatusResult(BaseModel):
 
 
 class JobResult(BaseModel):
-    """
-    Used by the dummy ASVO server endpoint to pass in the results of a job once all files are staged.
+    """Used by the dummy ASVO server endpoint to pass in the results of a job once all files are staged.
 
     job_id Integer job ID\n
     return_code: Integer error code, eg JOB_SUCCESS=0\n
@@ -64,17 +60,14 @@ class JobResult(BaseModel):
 
 
 class StageFiles(BaseModel):
-    """
-    Used by the dummy ASVO server endpoint to pretend to stage jobs.
-    """
+    """Used by the dummy ASVO server endpoint to pretend to stage jobs."""
     path: Optional[list[str]] = Query(None)
     copyint: int = Query(0, alias='copy')
     inode: Optional[list[int]] = Query(None)
 
 
 class JobStatus(BaseModel):
-    """
-    Used by the 'read status' endpoint to return the status of a single job.
+    """Used by the 'read status' endpoint to return the status of a single job.
 
     job_id:       Integer ASVO job ID\n
     created:      Integer unix timestamp when the job was created\n
@@ -101,8 +94,7 @@ class JobStatus(BaseModel):
 
 
 class GlobalStatistics(BaseModel):
-    """
-    Used by the 'get stats' endpoint to return the kafka/kafkad/staged status and health data.
+    """Used by the 'get stats' endpoint to return the kafka/kafkad/staged status and health data.
 
     kafkad_heartbeat:   Timestamp when kafkad.py last updated its status table\n
     kafka_alive: bool   Is the remote kafka daemon alive?\n
@@ -130,8 +122,7 @@ class GlobalStatistics(BaseModel):
 
 
 class JobList(BaseModel):
-    """
-    Used by the 'list all jobs' endoint to return a list of all jobs.
+    """Used by the 'list all jobs' endoint to return a list of all jobs.
 
     jobs:   Key is job ID, value is (staged_files, total_files, completed)
     """
@@ -140,8 +131,7 @@ class JobList(BaseModel):
 
 
 class ErrorResult(BaseModel):
-    """
-    Used by all jobs, to return an error message if the call failed.
+    """Used by all jobs, to return an error message if the call failed.
 
     errormsg:  Error message returned to caller
     """
@@ -149,8 +139,7 @@ class ErrorResult(BaseModel):
 
 
 class ScoutFileStatus(BaseModel):
-    """
-    Used by the Scout API dummy status endpoint, to return the status of a single file.
+    """Used by the Scout API dummy status endpoint, to return the status of a single file.
 
     archdone:        All copies complete, file exists on tape (possibly on disk as well)\n
     path:            First file name for file, for policy decisions, eg "/object.dat.0"\n
@@ -200,15 +189,11 @@ class ScoutFileStatus(BaseModel):
 
 
 class ScoutLogin(BaseModel):
-    """
-    Used by the dummy Scout API login endpoint, to pass username/password
-    """
+    """Used by the dummy Scout API login endpoint, to pass username/password"""
     acct: str      # Account name
     passwd: str = Query('', alias='pass')     # Account password
 
 
 class ScoutLoginResponse(BaseModel):
-    """
-    Used by the dummy Scout API login endoint to return the token
-    """
+    """Used by the dummy Scout API login endoint to return the token"""
     response: str    # Token string

@@ -1,5 +1,4 @@
-"""
-Daemon to run continuously, receiving Kafka messages about files that have been staged.
+"""Daemon to run continuously, receiving Kafka messages about files that have been staged.
 
 Updates the 'staging_jobs' and 'files' tables in the database, and pushes a notification to ASVO
 when all files in a job have been staged.
@@ -57,8 +56,7 @@ from kafka import errors, KafkaConsumer
 
 
 class KafkadConfig():
-    """Config class, used to load configuration data from environment variables.
-    """
+    """Config class, used to load configuration data from environment variables."""
     def __init__(self):
         self.KAFKA_TOPIC = os.getenv('KAFKA_TOPIC')
         self.KAFKA_SERVER = os.getenv('KAFKA_SERVER')
@@ -163,31 +161,36 @@ class ScoutAuth(AuthBase):
        requests, in calls to the requests module.
     """
     def __init__(self, token):
-        """
-        Store the API token
+        """Store the API token
 
-        :param token: token string from Scout's /v1/security/login endpoint
+        Args:
+            token: token string from Scout's /v1/security/login endpoint
         """
         self.token = token
 
     def __call__(self, r):
-        """
-        Modify the request by adding the Scout token to the header
+        """Modify the request by adding the Scout token to the header
 
-        :param r: request object
-        :return: modified request object
+        Args:
+            r: request object
+
+        Returns:
+            modified request object
         """
         r.headers['Authorization'] = 'Bearer %s' % self.token
         return r
 
 
 def get_scout_token(refresh: bool = False):
-    """
-    Pass the Scout username/password to the SCOUT_LOGIN_URL, and return a token to use for
+    """Pass the Scout username/password to the SCOUT_LOGIN_URL, and return a token to use for
     subsequent queries.
 
-    :param refresh: boolean, if True, the cached value of the token won't be used.
-    :return: token string
+    Args:
+        refresh: boolean, if True, the cached value of the token won't
+            be used.
+
+    Returns:
+        token string
     """
     global SCOUT_API_TOKEN
     if SCOUT_API_TOKEN and (not refresh):
@@ -210,17 +213,16 @@ def send_result(notify_url,
                 ready_files=0,
                 error_files=0,
                 comment=''):
-    """
-    Call the given URL to report the success or failure of a job, passing a JobResult structure
+    """Call the given URL to report the success or failure of a job, passing a JobResult structure
 
-    :param notify_url: URL to send job result to
-    :param job_id: Integer job ID
-    :param return_code: Integer return code, eg JOB_SUCCESS=0
-    :param total_files: Total number of files in job
-    :param ready_files: Number of files successfully staged
-    :param error_files: Number of files where Kafka returned an error
-    :param comment: Human readable string (eg error messages)
-    :return:
+    Args:
+        notify_url: URL to send job result to
+        job_id: Integer job ID
+        return_code: Integer return code, eg JOB_SUCCESS=0
+        total_files: Total number of files in job
+        ready_files: Number of files successfully staged
+        error_files: Number of files where Kafka returned an error
+        comment: Human readable string (eg error messages)
     """
     global LAST_CALLBACK_TMESTAMP
     data = {'job_id':job_id,
@@ -267,8 +269,7 @@ def send_result(notify_url,
 
 
 def process_message(msg, db):
-    """
-    Handle a single message from Kafka, when a new file has been staged. Here msg.value has already
+    """Handle a single message from Kafka, when a new file has been staged. Here msg.value has already
     been de-serialised, so it's a Python dictionary, with contents TBD.
 
     For development, msg.value['Filename'] will contain the path+filename of the file that has
@@ -289,9 +290,13 @@ def process_message(msg, db):
      "CompleteTime":"2022-02-04 03:00:53 +0000 GMT",
      "Error":"unable to stage file, no valid copies"}
 
-    :param msg: Named Tuple from Kafka, with attributes 'topic', 'partition', 'offset', 'key' and 'value'
-    :param db: Database connection object
-    :return: Number of rows updated in the files table
+    Args:
+        msg: Named Tuple from Kafka, with attributes 'topic',
+            'partition', 'offset', 'key' and 'value'
+        db: Database connection object
+
+    Returns:
+        Number of rows updated in the files table
     """
     filename = msg.value.get('Filename', None)
     errors = msg.value.get('Error', '')
@@ -316,10 +321,10 @@ def process_message(msg, db):
 
 
 def is_file_ready(filename):
-    """
-    Ask the Scout API for the status of this file, and return True if 'offlineblocks' is not equal to 0.
+    """Ask the Scout API for the status of this file, and return True if 'offlineblocks' is not equal to 0.
 
-    :param filename: File name to query
+    Args:
+        filename: File name to query
     :return bool: True if the file is staged and ready.
     """
     result = requests.get(config.SCOUT_QUERY_URL, params={'path':filename}, auth=ScoutAuth(get_scout_token()), verify=False)
@@ -336,11 +341,9 @@ def is_file_ready(filename):
 
 
 def HandleMessages(consumer):
-    """
-    Runs forever, processing Kafka messages one by one. Exits if there's an exception
+    """Runs forever, processing Kafka messages one by one. Exits if there's an exception
     in the message handling code.
 
-    :return:
     """
     global LAST_KAFKA_MESSAGE
     msgdb = psycopg.connect("user=%s password=%s host=%s dbname=%s" % (config.DBUSER, config.DBPASSWORD, config.DBHOST, config.DBNAME))
@@ -368,14 +371,16 @@ def HandleMessages(consumer):
 
 
 def job_failed(curs, job_id, total_files):
-    """
-    Write a file to STAGING_LOGDIR/failed/ with the name '<job_id>.txt' containing a list of all files that weren't
+    """Write a file to STAGING_LOGDIR/failed/ with the name '<job_id>.txt' containing a list of all files that weren't
     transferred before the job timed out, and a list of all files with errors.
 
-    :param curs: Psycopg database cursor object
-    :param job_id: Integer job ID
-    :param total_files: Number of files in the job, in total
-    :return: True if writing the file succeeded, False otherwise.
+    Args:
+        curs: Psycopg database cursor object
+        job_id: Integer job ID
+        total_files: Number of files in the job, in total
+
+    Returns:
+        True if writing the file succeeded, False otherwise.
     """
     LOGGER.debug('Called job_failed for job %d' % job_id)
     outdir = os.path.join(config.STAGING_LOGDIR, 'failed')
@@ -428,15 +433,15 @@ def job_failed(curs, job_id, total_files):
 
 
 def notify_and_delete_job(db, job_id, force_delete=False):
-    """
-    Call the notify_url, and if that call is successful, delete the job and return True.
+    """Call the notify_url, and if that call is successful, delete the job and return True.
 
     If unsuccessful, return False.
 
-    :param db:  Psycopg database object
-    :param job_id: integer job ID
-    :param force_delete: If True, delete the job even if the notify_url call failed
-    :return:
+    Args:
+        db: Psycopg database object
+        job_id: integer job ID
+        force_delete: If True, delete the job even if the notify_url
+            call failed
     """
     with db.cursor() as curs:
         try:
@@ -505,12 +510,14 @@ def notify_and_delete_job(db, job_id, force_delete=False):
 
 
 def restage_job(curs, job_id):
-    """
-    Ask Scout to stage all the files in this job, in case the original staging request was lost.
+    """Ask Scout to stage all the files in this job, in case the original staging request was lost.
 
-    :param curs:   Psycopg cursor object
-    :param job_id: integer job ID
-    :return: True if Scout API called successfully.
+    Args:
+        curs: Psycopg cursor object
+        job_id: integer job ID
+
+    Returns:
+        True if Scout API called successfully.
     """
     pathlist = []
     try:
@@ -555,12 +562,10 @@ def restage_job(curs, job_id):
 
 
 def MonitorJobs(consumer):
-    """
-    Runs continously, keeping track of job progress, and notifying ASVO as jobs are completed, or
+    """Runs continously, keeping track of job progress, and notifying ASVO as jobs are completed, or
     as they time out before completion.
 
     Does not return.
-    :return:
     """
     notify_attempts = {}    # Dict with job_id as the key, and unix timestamp as the value for the last attempt
     restage_attempts = {}   # Dict with job_id as the key, and unix timestamp for the last time a 're-stage files' call
