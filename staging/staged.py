@@ -11,7 +11,6 @@ $ uvicorn staged:app --reload --host 127.0.0.1
 import datetime
 import glob
 import ssl
-from datetime import timezone
 import os
 import logging
 from logging import handlers
@@ -38,25 +37,25 @@ class ApiConfig():
     """Config class, used to load configuration data from environment variables."""
 
     def __init__(self):
-        self.DBUSER = os.getenv('DBUSER')
-        self.DBPASSWORD = os.getenv('DBPASSWORD')
-        self.DBHOST = os.getenv('DBHOST')
-        self.DBNAME = os.getenv('DBNAME')
+        self.DBUSER = os.getenv('DBUSER', '')
+        self.DBPASSWORD = os.getenv('DBPASSWORD', '')
+        self.DBHOST = os.getenv('DBHOST', '')
+        self.DBNAME = os.getenv('DBNAME', '')
 
-        self.SCOUT_STAGE_URL = os.getenv('SCOUT_STAGE_URL')
-        self.SCOUT_CANCEL_URL = os.getenv('SCOUT_CANCEL_URL')
-        self.SCOUT_LOGIN_URL = os.getenv('SCOUT_LOGIN_URL')
-        self.SCOUT_API_USER = os.getenv('SCOUT_API_USER')
-        self.SCOUT_API_PASSWORD = os.getenv('SCOUT_API_PASSWORD')
-        self.SCOUT_QUERY_URL = os.getenv('SCOUT_QUERY_URL')
-        self.SCOUT_CACHESTATE_URL = os.getenv('SCOUT_CACHESTATE_URL')
+        self.SCOUT_STAGE_URL = os.getenv('SCOUT_STAGE_URL', '')
+        self.SCOUT_CANCEL_URL = os.getenv('SCOUT_CANCEL_URL', '')
+        self.SCOUT_LOGIN_URL = os.getenv('SCOUT_LOGIN_URL', '')
+        self.SCOUT_API_USER = os.getenv('SCOUT_API_USER', '')
+        self.SCOUT_API_PASSWORD = os.getenv('SCOUT_API_PASSWORD', '')
+        self.SCOUT_QUERY_URL = os.getenv('SCOUT_QUERY_URL', '')
+        self.SCOUT_CACHESTATE_URL = os.getenv('SCOUT_CACHESTATE_URL', '')
 
         self.STAGING_LOGDIR = os.getenv('STAGING_LOGDIR', '/tmp')
 
-        self.KAFKA_TOPIC = os.getenv('KAFKA_TOPIC')
+        self.KAFKA_TOPIC = os.getenv('KAFKA_TOPIC', '')
 
-        self.RESULT_USERNAME = os.getenv('RESULT_USERNAME')
-        self.RESULT_PASSWORD = os.getenv('RESULT_PASSWORD')
+        self.RESULT_USERNAME = os.getenv('RESULT_USERNAME', '')
+        self.RESULT_PASSWORD = os.getenv('RESULT_PASSWORD', '')
 
 
 config = ApiConfig()
@@ -101,6 +100,9 @@ DUMMY_TOKEN = "This is a real token, honest!"    # Used by the dummy Scout API e
 class ScoutAuth(AuthBase):
     """Attaches the 'Authorization: Bearer $TOKEN' header to the request, for authenticating Scout API
        requests.
+
+       Attributes:
+           token: token string from Scout's /v1/security/login endpoint
     """
     def __init__(self, token):
         """Store the API token
@@ -135,7 +137,7 @@ def get_scout_token(refresh: bool = False):
             be used.
 
     Returns:
-        token string
+        token string, or None if the login failed
     """
     global SCOUT_API_TOKEN
     if SCOUT_API_TOKEN and (not refresh):
@@ -150,6 +152,7 @@ def get_scout_token(refresh: bool = False):
             return SCOUT_API_TOKEN
         else:
             LOGGER.error('Failed to get Scout token: %d:%s' % (result.status_code, result.text))
+            return None
 
 
 def send_result(notify_url,
@@ -169,6 +172,9 @@ def send_result(notify_url,
         ready_files: Number of files successfully staged
         error_files: Number of files where Kafka returned an error
         comment: Human readable string (eg error messages)
+
+    Returns:
+        True if the notification was sent successfully, None otherwise
     """
     data = {'job_id':job_id,
             'return_code':return_code,
@@ -184,10 +190,11 @@ def send_result(notify_url,
         return None
     except requests.RequestException:
         LOGGER.error('Exception for job %d calling notify_url %s: %s' % (job_id, notify_url, traceback.format_exc()))
-        return
+        return None
 
     if result.status_code != 200:
         LOGGER.error('Error %d returned for job %d when calling notify_url: %s' % (result.status_code, job_id, result.text))
+        return None
     else:
         return True
 
@@ -336,7 +343,8 @@ async def new_job(job: models.NewJob, background_tasks: BackgroundTasks, respons
             status code returned
 
     Returns:
-        None
+        None if the new job creation succeeded, or an ErrorResult model if
+        there was an error.
     """
     LOGGER.info('Called new_job with job %d' % job.job_id)
     db = staged_db.DBPOOL.getconn()
@@ -357,7 +365,7 @@ async def new_job(job: models.NewJob, background_tasks: BackgroundTasks, respons
 
         background_tasks.add_task(create_job, job=job)
         LOGGER.info('Exiting new_job with job %d' % job.job_id)
-        return
+        return None
 
     except Exception:  # Any other errors
         response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -470,7 +478,7 @@ def delete_job(job_id: int, response:Response):
             status code returned
 
     Returns:
-        None
+        None if the job was deleted, or an ErrorResult model if there was an error.
     """
     LOGGER.info('Called delete_job with job_id %d' % job_id)
     db = staged_db.DBPOOL.getconn()
@@ -506,7 +514,7 @@ def delete_job(job_id: int, response:Response):
                 LOGGER.info('Job %d DELETED.' % job_id)
 
         LOGGER.info('Exiting delete_job with job_id %d' % job_id)
-        return
+        return None
     except Exception:  # Any other errors
         response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
         exc_str = traceback.format_exc()
@@ -565,7 +573,7 @@ def get_stats(response:Response):
             status code returned
 
     Returns:
-        GlobalStatus object
+        GlobalStatus object, or an ErrorResult object if there was an error
     """
     db = staged_db.DBPOOL.getconn()
     try:
@@ -666,7 +674,7 @@ def get_joblist(response:Response):
             status code returned
 
     Returns:
-        JobList object
+        JobList object, or an ErrorResult object if there was an error
     """
     db = staged_db.DBPOOL.getconn()
     try:
@@ -705,7 +713,7 @@ def get_failed_joblist(response:Response):
             status code returned
 
     Returns:
-        JobList object
+        JobList object, or an ErrorResult object if there was an error
     """
     try:
         result = models.JobList()
@@ -746,7 +754,7 @@ def get_failed_job(job_id: int, response:Response):
             status code returned
 
     Returns:
-        JSON dict as defined by the JobStatus() class above
+        JSON dict as defined by the JobStatus() class above, or an ErrorResult object if there was an error
     """
     try:
         fname = '/var/log/staging/failed/%d.txt' % job_id
@@ -821,10 +829,12 @@ async def file_status(data: models.FileStatus, response: Response):
             status code returned
 
     Returns:
-        None
+        Dictionary mapping filenames to boolean success flags, or an ErrorResult object if there was an error
     """
     try:
         allresults = {}
+        if data.files is None:
+            return allresults
         for filename in data.files:
             LOGGER.info('Getting status for %s' % str(filename))
             result = requests.get(config.SCOUT_QUERY_URL, params={'path': filename}, auth=ScoutAuth(get_scout_token()),
@@ -871,7 +881,7 @@ def dummy_scout_login(account: models.ScoutLogin, response:Response):
             status code returned
 
     Returns:
-        Token string in a dict, with key 'response'
+        Token string in a dict, with key 'response', or None if there was an error
     """
     if (account.acct == config.SCOUT_API_USER) and (account.passwd == config.SCOUT_API_PASSWORD):
         LOGGER.info('Pretending be Scout: /v1/security/login passed, returning token')
@@ -879,7 +889,7 @@ def dummy_scout_login(account: models.ScoutLogin, response:Response):
     else:
         LOGGER.error('Pretending be Scout: /v1/security/login failed, Bad username/password')
         response.status_code = 401
-        return
+        return None
 
 
 @app.post("/v1/request/batchstage/",
@@ -934,7 +944,7 @@ def dummy_scout_status(request:Request, response:Response, path: str = Query(...
             status code returned
 
     Returns:
-        None
+        A ScoutFileStatus object, or None if there was an error
     """
     if request.headers['Authorization'] == 'Bearer %s' % DUMMY_TOKEN:
         resp = models.ScoutFileStatus(path=path)
@@ -948,6 +958,7 @@ def dummy_scout_status(request:Request, response:Response, path: str = Query(...
     else:
         LOGGER.error("Pretending to be Scout: /v1/file succeeded: bad Authorization header: %s" % request.headers['Authorization'])
         response.status_code = 403
+        return None
 
 
 ########################################################################################################

@@ -37,7 +37,6 @@ An empty error string indicates no error on the stage.
 import os
 import json
 import datetime
-from datetime import timezone
 import glob
 import logging
 from logging import handlers
@@ -58,27 +57,27 @@ from kafka import errors, KafkaConsumer
 class KafkadConfig():
     """Config class, used to load configuration data from environment variables."""
     def __init__(self):
-        self.KAFKA_TOPIC = os.getenv('KAFKA_TOPIC')
-        self.KAFKA_SERVER = os.getenv('KAFKA_SERVER')
-        self.KAFKA_USER = os.getenv('KAFKA_USER')
-        self.KAFKA_PASSWORD = os.getenv('KAFKA_PASSWORD')
+        self.KAFKA_TOPIC = os.getenv('KAFKA_TOPIC', '')
+        self.KAFKA_SERVER = os.getenv('KAFKA_SERVER', '')
+        self.KAFKA_USER = os.getenv('KAFKA_USER', '')
+        self.KAFKA_PASSWORD = os.getenv('KAFKA_PASSWORD', '')
 
-        self.SCOUT_LOGIN_URL = os.getenv('SCOUT_LOGIN_URL')
-        self.SCOUT_API_USER = os.getenv('SCOUT_API_USER')
-        self.SCOUT_API_PASSWORD = os.getenv('SCOUT_API_PASSWORD')
-        self.SCOUT_QUERY_URL = os.getenv('SCOUT_QUERY_URL')
-        self.SCOUT_STAGE_URL = os.getenv('SCOUT_STAGE_URL')
+        self.SCOUT_LOGIN_URL = os.getenv('SCOUT_LOGIN_URL', '')
+        self.SCOUT_API_USER = os.getenv('SCOUT_API_USER', '')
+        self.SCOUT_API_PASSWORD = os.getenv('SCOUT_API_PASSWORD', '')
+        self.SCOUT_QUERY_URL = os.getenv('SCOUT_QUERY_URL', '')
+        self.SCOUT_STAGE_URL = os.getenv('SCOUT_STAGE_URL', '')
 
         self.STAGING_LOGDIR = os.getenv('STAGING_LOGDIR', '/tmp')
         self.REPORT_EXPIREDAYS = os.getenv('REPORT_EXPIREDAYS', 30)
 
-        self.DBUSER = os.getenv('DBUSER')
-        self.DBPASSWORD = os.getenv('DBPASSWORD')
-        self.DBHOST = os.getenv('DBHOST')
-        self.DBNAME = os.getenv('DBNAME')
+        self.DBUSER = os.getenv('DBUSER', '')
+        self.DBPASSWORD = os.getenv('DBPASSWORD', '')
+        self.DBHOST = os.getenv('DBHOST', '')
+        self.DBNAME = os.getenv('DBNAME', '')
 
-        self.RESULT_USERNAME = os.getenv('RESULT_USERNAME')
-        self.RESULT_PASSWORD = os.getenv('RESULT_PASSWORD')
+        self.RESULT_USERNAME = os.getenv('RESULT_USERNAME', '')
+        self.RESULT_PASSWORD = os.getenv('RESULT_PASSWORD', '')
 
         self.FILE_RESTAGE_INTERVAL = int(os.getenv('FILE_RESTAGE_INTERVAL', '21600'))   # Repeat file staging request if a job isn't complete.
         self.JOB_EXPIRY_TIME = int(os.getenv('JOB_EXPIRY_TIME', '172800'))
@@ -159,6 +158,9 @@ JOB_CREATION_EXCEPTION = 199   # An exception occurred while creating the job. C
 class ScoutAuth(AuthBase):
     """Attaches the 'Authorization: Bearer $TOKEN' header to the request, for authenticating Scout API
        requests, in calls to the requests module.
+
+       Attributes:
+           token: token string from Scout's /v1/security/login endpoint
     """
     def __init__(self, token):
         """Store the API token
@@ -190,7 +192,7 @@ def get_scout_token(refresh: bool = False):
             be used.
 
     Returns:
-        token string
+        token string, or None if the login failed
     """
     global SCOUT_API_TOKEN
     if SCOUT_API_TOKEN and (not refresh):
@@ -223,6 +225,9 @@ def send_result(notify_url,
         ready_files: Number of files successfully staged
         error_files: Number of files where Kafka returned an error
         comment: Human readable string (eg error messages)
+
+    Returns:
+        True if the notification was sent successfully, None otherwise
     """
     global LAST_CALLBACK_TMESTAMP
     data = {'job_id':job_id,
@@ -325,7 +330,9 @@ def is_file_ready(filename):
 
     Args:
         filename: File name to query
-    :return bool: True if the file is staged and ready.
+
+    Returns:
+        True if the file is staged and ready, None otherwise
     """
     result = requests.get(config.SCOUT_QUERY_URL, params={'path':filename}, auth=ScoutAuth(get_scout_token()), verify=False)
     if result.status_code == 403:
@@ -344,6 +351,8 @@ def HandleMessages(consumer):
     """Runs forever, processing Kafka messages one by one. Exits if there's an exception
     in the message handling code.
 
+    Args:
+        consumer: Kafka consumer object
     """
     global LAST_KAFKA_MESSAGE
     msgdb = psycopg.connect("user=%s password=%s host=%s dbname=%s" % (config.DBUSER, config.DBPASSWORD, config.DBHOST, config.DBNAME))
@@ -442,6 +451,9 @@ def notify_and_delete_job(db, job_id, force_delete=False):
         job_id: integer job ID
         force_delete: If True, delete the job even if the notify_url
             call failed
+
+    Returns:
+        True if the notify_url call was successful and the job was deleted, False otherwise
     """
     with db.cursor() as curs:
         try:
@@ -517,7 +529,7 @@ def restage_job(curs, job_id):
         job_id: integer job ID
 
     Returns:
-        True if Scout API called successfully.
+        True if Scout API called successfully, False if not
     """
     pathlist = []
     try:
@@ -566,6 +578,9 @@ def MonitorJobs(consumer):
     as they time out before completion.
 
     Does not return.
+
+    Args:
+        consumer: Kafka consumer object
     """
     notify_attempts = {}    # Dict with job_id as the key, and unix timestamp as the value for the last attempt
     restage_attempts = {}   # Dict with job_id as the key, and unix timestamp for the last time a 're-stage files' call

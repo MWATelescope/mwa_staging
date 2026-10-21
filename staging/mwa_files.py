@@ -14,7 +14,7 @@ import requests
 
 logging.basicConfig()
 
-DATA_FILES_URL = 'http://ws.mwatelescope.org/metadata/data_files'
+DATA_FILES_URL = 'https://ws.mwatelescope.org/metadata/data_files'
 
 LOGGER = logging.getLogger('mwa_files')
 
@@ -25,9 +25,10 @@ class MWAObservation(BaseModel):
     have a different format). If start_time and duration are zero, they default to the beginning of the observation
     and 9999999999 respectively, for VCS observations.
 
-    obs_id:      Obsid of the observation, used to look up the filenames\n
-    start_time:  For VCS observations, when looking up filenames, ignore files before this time.\n
-    duration:    For VCS observations, when looking up filenames, ignore files after start_time+duration\n
+    Attributes:
+        obs_id:      Obsid of the observation, used to look up the filenames\n
+        start_time:  For VCS observations, when looking up filenames, ignore files before this time.\n
+        duration:    For VCS observations, when looking up filenames, ignore files after start_time+duration\n
     """
     obs_id: Optional[int]           # Obsid of the observation, used to look up the filenames
     start_time: Optional[int] = 0   # For VCS observations, when looking up filenames, ignore files before this time.
