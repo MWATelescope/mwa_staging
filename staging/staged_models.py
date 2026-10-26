@@ -15,9 +15,11 @@ class NewJob(BaseModel):
     """Used by the 'new job' endpoint to pass in the job ID and either a list of files, or a telescope specific structure
     defining an observation, where all files that are part of that observation should be staged.
 
-    job_id:      Integer staging job ID\n
-    files:       A list of filenames, including full paths\n
-    obs:         Telescope-specific structure defining an observation whose files you want staged\n
+    Attributes:
+        job_id:      Integer staging job ID\n
+        files:       A list of filenames, including full paths\n
+        notify_url:  URL to call to notify the client about job failure or success\n
+        obs:         Telescope-specific structure defining an observation whose files you want staged\n
     """
     job_id: int                       # Integer staging job ID
     files: Optional[list[str]] = []   # A list of filenames, including full paths
@@ -28,7 +30,8 @@ class NewJob(BaseModel):
 class FileStatus(BaseModel):
     """Used by the 'File status' endpoint to pass in the a list of files.
 
-    files:       A list of filenames, including full paths\n
+    Attributes:
+        files:       A list of filenames, including full paths\n
     """
     files: Optional[list[str]] = []   # A list of filenames, including full paths
 
@@ -36,7 +39,8 @@ class FileStatus(BaseModel):
 class FileStatusResult(BaseModel):
     """Used by the 'File status' endpoint to return the status of the queried files
 
-    allresults:   A dictionary with filename as key, and a boolean (True if the file is staged) as value
+    Attributes:
+        files:   A dictionary with filename as key, and a boolean (True if the file is staged) as value
     """
     files: dict[str, bool] = {"":False}
 
@@ -44,12 +48,13 @@ class FileStatusResult(BaseModel):
 class JobResult(BaseModel):
     """Used by the dummy ASVO server endpoint to pass in the results of a job once all files are staged.
 
-    job_id Integer job ID\n
-    return_code: Integer error code, eg JOB_SUCCESS=0\n
-    total_files: Total number of files in job\n
-    ready_files: Number of files successfully staged\n
-    error_files: Number of files where Kafka returned an error\n
-    comment: Human readable string (eg error message)\n
+    Attributes:
+        job_id Integer job ID\n
+        return_code: Integer error code, eg JOB_SUCCESS=0\n
+        total_files: Total number of files in job\n
+        ready_files: Number of files successfully staged\n
+        error_files: Number of files where Kafka returned an error\n
+        comment: Human readable string (eg error message)\n
     """
     job_id: int      # Integer staging job ID
     return_code: int  # Integer error code, eg JOB_SUCCESS=0
@@ -60,7 +65,13 @@ class JobResult(BaseModel):
 
 
 class StageFiles(BaseModel):
-    """Used by the dummy ASVO server endpoint to pretend to stage jobs."""
+    """Used by the dummy ASVO server endpoint to pretend to stage jobs.
+
+    Attributes:
+        path: Optional[list[str]] = Query(None)
+        copyint: int = Query(0, alias='copy')
+        inode: Optional[list[int]] = Query(None)
+    """
     path: Optional[list[str]] = Query(None)
     copyint: int = Query(0, alias='copy')
     inode: Optional[list[int]] = Query(None)
@@ -69,17 +80,20 @@ class StageFiles(BaseModel):
 class JobStatus(BaseModel):
     """Used by the 'read status' endpoint to return the status of a single job.
 
-    job_id:       Integer ASVO job ID\n
-    created:      Integer unix timestamp when the job was created\n
-    completed:    True if all files have been staged\n
-    total_files:  Total number of files in this job\n
-    ready_files: Number of files successfully staged\n
-    error_files: Number of files where Kafka returned an error\n
-    last_readytime: Integer unix timestamp of the last time a file was staged\n
-    files:        key is filename, value is tuple(bool, bool, int), which contains (ready, error, readytime)\n
-
     The files attribute is a list of (ready:bool, readytime:int) tuples where ready_time is the time when that file
     was staged (or None)
+
+
+    Attributes:
+        job_id:       Integer ASVO job ID\n
+        created:      Integer unix timestamp when the job was created\n
+        completed:    True if all files have been staged\n
+        total_files:  Total number of files in this job\n
+        ready_files: Number of files successfully staged\n
+        error_files: Number of files where Kafka returned an error\n
+        last_readytime: Integer unix timestamp of the last time a file was staged\n
+        files:        key is filename, value is tuple(bool, bool, int), which contains (ready, error, readytime)\n
+
     """
     job_id: int       # Integer staging job ID
     created: Optional[int] = None      # Integer unix timestamp when the job was created
@@ -96,13 +110,22 @@ class JobStatus(BaseModel):
 class GlobalStatistics(BaseModel):
     """Used by the 'get stats' endpoint to return the kafka/kafkad/staged status and health data.
 
-    kafkad_heartbeat:   Timestamp when kafkad.py last updated its status table\n
-    kafka_alive: bool   Is the remote kafka daemon alive?\n
-    last_message:       Timestamp when the last valid file status message was received\n
-    completed_jobs:     Total number of jobs with all files staged\n
-    incomplete_jobs:    Number of jobs waiting for files to be staged\n
-    ready_files: i      Total number of files staged so far\n
-    unready_files:      Number of files we are waiting to be staged\n
+    Attributes:
+        kafkad_heartbeat:   Timestamp when kafkad.py last updated its status table\n
+        kafka_alive:        Is the remote kafka daemon alive?\n
+        last_message:       Timestamp when the last valid file status message was received\n
+        completed_jobs:     Total number of jobs with all files staged\n
+        incomplete_jobs:    Number of jobs waiting for files to be staged\n
+        ready_files:        Total number of files staged so far\n
+        error_files:        Number of files where Kafka returned an error\n
+        waiting_files:      Number of files we are waiting to be staged\n
+        availdatasz:        scoutfs available data capacity\n
+        health:             scoutfs health of filesystem: 0-unknown, 1-ok, 2-warning, 3-error\n
+        healthstatus:       scoutfs health status info string\n
+        releaseable:        scoutfs capacity of online files eligible for release (archive complete)\n
+        totdatasz:          scoutfs total data capacity\n
+        nonreleaseable:      scoutfs non-releaseable data size\n
+        pending:            scoutfs size of data pending archiving\n
     """
     kafkad_heartbeat: Optional[float] = 0.0  # Timestamp when kafkad.py last updated its status table
     kafka_alive: bool = False                # Is the remote kafka daemon alive?
@@ -124,7 +147,8 @@ class GlobalStatistics(BaseModel):
 class JobList(BaseModel):
     """Used by the 'list all jobs' endoint to return a list of all jobs.
 
-    jobs:   Key is job ID, value is (staged_files, total_files, completed)
+    Attributes:
+        jobs:   Key is job ID, value is (staged_files, total_files, completed)
     """
     jobs: dict[int, tuple] = {}     # Key is job ID, value is (job_id, created, staged_files, total_files, completed,
                                     # last_readytime, error_files)
@@ -133,7 +157,8 @@ class JobList(BaseModel):
 class ErrorResult(BaseModel):
     """Used by all jobs, to return an error message if the call failed.
 
-    errormsg:  Error message returned to caller
+    Attributes:
+        errormsg:  Error message returned to caller
     """
     errormsg: str   # Error message returned to caller
 
@@ -141,28 +166,29 @@ class ErrorResult(BaseModel):
 class ScoutFileStatus(BaseModel):
     """Used by the Scout API dummy status endpoint, to return the status of a single file.
 
-    archdone:        All copies complete, file exists on tape (possibly on disk as well)\n
-    path:            First file name for file, for policy decisions, eg "/object.dat.0"\n
-    size:            File size in bytes, eg "10485760"\n
-    inode:           File inode number, eg "2"\n
-    uid:             User ID for file, eg "0"\n
-    username:        User name for file, eg "root"\n
-    gid:             group ID for file, eg "0"\n
-    groupname:       group name for file, eg "root"\n
-    mode:            file mode, eg 33188\n
-    modestring:      file mode string, eg "-rw-r--r--"\n
-    nlink:           number of links to file, eg 1\n
-    atime:           access time, eg "1618411999"\n
-    mtime:           modify time, eg "1618411968"\n
-    ctime:           attribute change time, eg "1618415117"\n
-    rtime:           residence time, eg "1618415102"\n
-    version:         Data version, eg "2560"\n
-    onlineblocks:    Number of online blocks, eg "2560"\n
-    offlineblocks:   Number of offline blocks, eg "0"\n
-    flags:           archive flags, eg "0"\n
-    flagsstring:     archive flags string, eg ""\n
-    uuid:            UUID for file, eg "8e9825f9-291d-415e-bb1f-38d8f865dcac"\n
-    copies:          Complex sub-structure that we'll ignore for this dummy service
+    Attributes:
+        archdone:        All copies complete, file exists on tape (possibly on disk as well)\n
+        path:            First file name for file, for policy decisions, eg "/object.dat.0"\n
+        size:            File size in bytes, eg "10485760"\n
+        inode:           File inode number, eg "2"\n
+        uid:             User ID for file, eg "0"\n
+        username:        User name for file, eg "root"\n
+        gid:             group ID for file, eg "0"\n
+        groupname:       group name for file, eg "root"\n
+        mode:            file mode, eg 33188\n
+        modestring:      file mode string, eg "-rw-r--r--"\n
+        nlink:           number of links to file, eg 1\n
+        atime:           access time, eg "1618411999"\n
+        mtime:           modify time, eg "1618411968"\n
+        ctime:           attribute change time, eg "1618415117"\n
+        rtime:           residence time, eg "1618415102"\n
+        version:         Data version, eg "2560"\n
+        onlineblocks:    Number of online blocks, eg "2560"\n
+        offlineblocks:   Number of offline blocks, eg "0"\n
+        flags:           archive flags, eg "0"\n
+        flagsstring:     archive flags string, eg ""\n
+        uuid:            UUID for file, eg "8e9825f9-291d-415e-bb1f-38d8f865dcac"\n
+        copies:          Complex sub-structure that we'll ignore for this dummy service
     """
     archdone: bool = True     # All copies complete, file exists on tape (possibly on disk as well)
     path: str                 # First file name for file, for policy decisions, eg "/object.dat.0"
@@ -189,11 +215,20 @@ class ScoutFileStatus(BaseModel):
 
 
 class ScoutLogin(BaseModel):
-    """Used by the dummy Scout API login endpoint, to pass username/password"""
+    """Used by the dummy Scout API login endpoint, to pass username/password
+
+    Attributes:
+        acct: str      # Account name
+        passwd: str = Query('', alias='pass')     # Account password
+    """
     acct: str      # Account name
     passwd: str = Query('', alias='pass')     # Account password
 
 
 class ScoutLoginResponse(BaseModel):
-    """Used by the dummy Scout API login endoint to return the token"""
+    """Used by the dummy Scout API login endoint to return the token
+
+    Attributes:
+        response: str    # Token string
+    """
     response: str    # Token string
