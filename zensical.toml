@@ -12,7 +12,7 @@ repo_name = "MWATelescope/mwa_staging"
 
 nav = [
   { "Description" = "Description.md" },
-  { "Desployment" = "Deployment.md" },
+  { "Deployment" = "Deployment.md" },
   { "Code" = "Code.md" }
 ]
 

@@ -55,6 +55,7 @@ callback URL notifying it of this. Once the caller has been successfully notifie
 that the job is complete (or has timed out), the job will be deleted from the
 database.
 
+See [here](/Deployment) for more details on how to deploy this service.
 
 ## Each of the services explained
 
