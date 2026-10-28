@@ -1,0 +1,4 @@
+# Kafka daemon
+
+::: staging.kafkad
+

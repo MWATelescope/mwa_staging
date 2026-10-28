@@ -4,6 +4,8 @@ site_name = "MWA staging service docs"
 site_description = "Documentation for the MWA staging service"
 site_author = "Andrew Williams"
 
+watch = ['staging']
+
 # copyright = "Copyright &copy; 2026 Your name"
 
 repo_url = "https://github.com/MWATelescope/mwa_staging"
@@ -11,9 +13,12 @@ repo_name = "MWATelescope/mwa_staging"
 # edit_uri = "edit/main/docs/"
 
 nav = [
-  { "Description" = "Description.md" },
+  { "Index" = "Index.md" },
   { "Deployment" = "Deployment.md" },
-  { "Code" = "Code.md" }
+  { "Implementation" = "Implementation.md" },
+  { "Staged" = "Staged.md" },
+  { "Kafkad" = "Kafkad.md" },
+  { "Zensical intro" = "Zensical.md" },
 ]
 
 # extra_css = ["stylesheets/extra.css"]
@@ -117,3 +122,13 @@ pymdownx.tabbed.alternate_style = true
 pymdownx.tabbed.combine_header_slug = true
 pymdownx.tasklist.custom_checkbox = true
 pymdownx.tilde = {}
+
+[project.plugins.mkdocstrings]
+enabled = true
+
+[project.plugins.mkdocstrings.handlers.python.options]
+members_order = "source"
+
+[project.plugins.autorefs]
+enabled = true
+

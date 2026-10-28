@@ -1,4 +1,5 @@
-## Installation
+# Deployment
+
 Assuming a vanilla Ubuntu 24.04 installation:
 
   - Install packages and create the staging user, as root:

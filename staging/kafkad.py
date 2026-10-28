@@ -5,31 +5,28 @@ when all files in a job have been staged.
 
 To test with manually generated Kafka messages, eg:
 
+```
 >>> from kafka import KafkaProducer
 >>> import json
 >>> p = KafkaProducer(bootstrap_servers=['scoutam.pawsey.org.au:9092'], value_serializer=lambda v: json.dumps(v).encode('utf-8'))
 >>> p.send('mwa', {'Filename':'gibber'})
 >>> p.send('mwa', {'Filename':'foo'})
+```
 
 To view messages, do:
 
+```
 from kafka import KafkaConsumer
 c = KafkaConsumer('mwa', bootstrap_servers=['scoutam.pawsey.org.au:9092'], auto_offset_reset='earliest', enable_auto_commit=False, group_id='mwa_staging')
 c.topics()
+```
 
-From Harrison:
-I’ve setup rclone as the ubuntu user and added the test vm as a remote called test. Just type rclone and it gives you the help menu for how to use it, it’s got a really nice CLI
-
-Examples:
-rclone ls test: - list all buckets and files
-rclone mkdir test:12345 - create a bucket called 12345 in the test remote
-rclone copy test.txt test:12345 - copy test.txt to the bucket created above
-
-and
 
 Sample Kafka messages:
+```
 {"Inode":45871,"Filename":"nfs/file1","RequestTime":"2022-02-04 03:01:38 +0000 GMT","CompleteTime":"2022-02-04 03:02:32 +0000 GMT","Error":""}
 {"Inode":45871,"Filename":"nfs/file1","RequestTime":"2022-02-04 03:00:38 +0000 GMT","CompleteTime":"2022-02-04 03:00:53 +0000 GMT","Error":"unable to stage file, no valid copies"}
+```
 
 An empty error string indicates no error on the stage.
 """
@@ -156,8 +153,8 @@ JOB_CREATION_EXCEPTION = 199   # An exception occurred while creating the job. C
 
 
 class ScoutAuth(AuthBase):
-    """Attaches the 'Authorization: Bearer $TOKEN' header to the request, for authenticating Scout API
-       requests, in calls to the requests module.
+    """Subclasses requests.auth.AuthBase to attache the 'Authorization: Bearer $TOKEN' header to the request,
+       for authenticating Scout API requests, in calls to the requests module.
 
        Attributes:
            token: token string from Scout's /v1/security/login endpoint
