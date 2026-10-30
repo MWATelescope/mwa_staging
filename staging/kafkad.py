@@ -1,7 +1,27 @@
-"""Daemon to run continuously, receiving Kafka messages about files that have been staged.
+"""Implements the kafkad service, controlled by systemd:
 
-Updates the 'staging_jobs' and 'files' tables in the database, and pushes a notification to ASVO
-when all files in a job have been staged.
+`systemctl start|stop|restart kafkad`
+
+This is the daemon that monitors the staging job queue, and responds to messages from
+Kafka. In a background thread, it asynchrously handles Kafka messages, each about a single
+file that has just been staged, or just failed to stage with an error. As each message is
+received, it updates the files table with the status of that file.
+
+In parallel, inside the main loop in the MonitorJobs function, it loops over all jobs,
+and for each job:
+
+* If that job is marked as completed, but ASVO has not yet been notified, it sends a notification
+  to ASVO. If that notification succeeds, it deletes the job.
+* If that job is not yet marked as completed, it checks to see if all files for that job have
+  been staged (or have failed with an error from Kafka). If so, it marks the job as completed,
+  and sends a notification to ASVO. If that notification succeeds, it deletes the job.
+* If the job age is older than the job expiry time (as defined in the JOB_EXPIRY_TIME
+  environment variable), it notifies ASVO of the failure, and if successful, deletes the job.
+* If the job is still pending, and the last call to Scout to stage the file was more than
+  the number of seconds defined in the FILE_RESTAGE_INTERVAL ago, it calls Scout again to
+  restage the file.
+* If a previous attempt to notify ASVO with a callback about job completion has failed,
+  it will retry every 600 seconds.
 
 To test with manually generated Kafka messages, eg:
 

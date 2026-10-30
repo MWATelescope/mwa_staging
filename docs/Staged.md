@@ -1,21 +1,25 @@
-# FastAPI web server:
+# Overview:
 
-## PyDantic models
+Implements the 'staged' service, controlled by systemd:
 
-The PyDantic models are used to validate and parse the JSON data received by the
-web server. They are defined in staged_models.py.
+`systemctl start|stop|restart staged`
 
-::: staging.staged_models
+This is the FastAPI web server that implements the staged service. It provides a number of 
+endpoints used by ASVO to request that the files associated with MWA observations be 
+staged off tape onto an Acacia 'S3' style filesystem for downloading. 
 
-## SQL queries
+It also has endpoints that allow ASVO to monitor the status of the staged service, and to 
+query the database for the status of files that have been staged. These are described in 
+the [Logging and Monitoring](Logging_and_monitoring.md) section.
 
-The SQL queries are used to interact with the PostgreSQL database. They are defined in 
-staged_db.py.
+Some additional endpoints are included for testing - these emulate the Scout API endpoints that are 
+used to stage files, and a dummy callback URL that can be used instead of a real ASVO callback.
 
-::: staging.staged_db
+## Code documentation:
 
-## Main staging server
+The main code is implemented in [staged.py](staged_py.md).
 
-The main staging server is implemented in staged.py.
+It uses the following modules:
 
-::: staging.staged
+* [staged_db.py](staged_db_py.md) - defines SQL queries for the database interface
+* [staged_models.py](staged_models_py.md) - defines the PyDantic models for the API.

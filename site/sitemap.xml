@@ -1,24 +1,3 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-      <url>
-        <loc>https://www.example.com/Deployment/</loc>
-      </url>
-      <url>
-        <loc>https://www.example.com/Implementation/</loc>
-      </url>
-      <url>
-        <loc>https://www.example.com/Index/</loc>
-      </url>
-      <url>
-        <loc>https://www.example.com/Kafkad/</loc>
-      </url>
-      <url>
-        <loc>https://www.example.com/Staged/</loc>
-      </url>
-      <url>
-        <loc>https://www.example.com/Zensical/</loc>
-      </url>
-      <url>
-        <loc>https://www.example.com/markdown/</loc>
-      </url>
 </urlset>

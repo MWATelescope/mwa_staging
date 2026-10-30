@@ -1,9 +1,13 @@
 """Staging daemon, to take requests for files from ASVO, request those files from the tape system, listen for Kafka
 messages about those files, and return the results to ASVO.
 
-This file implements the REST API for accepting requests from ASVO, and another process will handle Kafka messages.
+Implements the 'staged' service, controlled by systemd:
 
-Run with the 'staging_env' environment active, from mwa_staging/staging, as:
+`systemctl start|stop|restart staged`
+
+This file implements the REST API for accepting requests from ASVO.
+
+Can be run locally, for testing, with the 'staging_env' environment active, from mwa_staging/staging, as:
 
 $ uvicorn staged:app --reload --host 127.0.0.1
 """
